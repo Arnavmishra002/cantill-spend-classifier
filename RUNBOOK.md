@@ -11,7 +11,8 @@ Run every command in a normal terminal, not inside a Claude Code sandbox, which 
 
 ```bash
 cd cantill-spend-classifier
-git status                       # clean, on main, at tag v1.0-freeze
+git status                       # clean, on main
+git describe --tags              # the newest v1.0.x tag (v1.0.1 or later) on the last commit before 10:00
 source .venv/bin/activate        # or: python3.12 -m venv .venv && pip install -r requirements.txt
 cut -d= -f1 .env                 # ANTHROPIC_API_KEY listed (the value is never printed)
 python -m pytest -q              # all tests pass
