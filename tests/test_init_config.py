@@ -78,3 +78,30 @@ def test_draft_and_run_offline(tmp_path):
     # the two spellings of the hotel (same GSTIN) are one supplier
     keys = out.set_index("record_id")["supplier_key"]
     assert keys["L00000"] == keys["L00001"]
+
+
+def test_supplier_id_synonyms_dayfirst_and_unique_lists(tmp_path):
+    from spendcube.init_config import guess_dayfirst
+    assert guess_dayfirst(pd.Series(["03/25/2024", "04/01/2024"])) is False   # month first
+    assert guess_dayfirst(pd.Series(["25/03/2024", "01/04/2024"])) is True    # day first
+    assert guess_dayfirst(pd.Series(["01/02/2024", "2024-03-05"])) is None    # undecidable
+    for header in ["Supplier No.", "Vendor ID", "Vendor #", "Vendor Code"]:
+        d = tmp_path / header.replace(" ", "_").replace("#", "n").replace(".", "")
+        d.mkdir()
+        n = 40
+        pd.DataFrame({
+            "Line ID": [f"X{i}" for i in range(n)], header: [f"V{1000 + i % 7}" for i in range(n)],
+            "Supplier Name": [["Acme Ltd", "Beta Corp", "Gamma Inc"][i % 3] for i in range(n)],
+            "Invoice Date": [f"{(i % 12) + 1:02d}/{(i % 27) + 2:02d}/2025" for i in range(n)],
+            "Description": ["steel plate 10mm"] * n, "Amount": ["12.50"] * n,
+            "Status": ["Paid", "paid ", "Approved", "Paid"] * (n // 4),
+        }).to_csv(d / "lines.csv", index=False)
+        pd.DataFrame({"L1": ["A"], "L2": ["B"]}).to_csv(d / "tree.csv", index=False)
+        cfg = yaml.safe_load(draft_config(str(d), "tree.csv", str(d / "c.yaml"), use_llm=False).read_text())
+        src = cfg["sources"][0]
+        assert src["columns"].get("supplier_id") == header, (header, src["columns"])
+        assert src["columns"].get("supplier_name") == "Supplier Name"
+        assert src["dayfirst"] is False
+        assert len(src["file"]) == len(set(src["file"]))
+        inc = src["status_map"]["include"]
+        assert len(inc) == len(set(inc)) and "paid" in inc

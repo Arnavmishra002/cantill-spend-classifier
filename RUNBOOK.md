@@ -35,7 +35,8 @@ Review `configs/company_c.yaml` (10 minutes max):
 - [ ] `status_map`: paid/approved → include; cancelled → CANCELLED; rejected/hold/... → NOT_APPROVED
 - [ ] `non_procurement`: keep generic tax/intercompany/finance rules; check drafted GL account list
 - [ ] `taxonomy.level_columns` in order L1..L4 (or `format: parent_child`)
-- [ ] `classification.company_context` reads right (one or two sentences)
+- [ ] `classification.company_context`: fill it in now, at 10:00, in one or two plain sentences (industry,
+      what the company buys). The draft writes one when the API is reachable; check it, and replace any TODO.
 - [ ] `cost_cap_usd` (default 8) is fine
 
 ## 3. Run the three companies

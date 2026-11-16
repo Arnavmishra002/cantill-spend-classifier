@@ -45,7 +45,8 @@ HEADER_HINTS = {
     "date": [r"inv(oice)?[\s_]*date", r"doc(ument)?[\s_]*date", r"bill[\s_]*date", r"^date$", r"txn[\s_]*date", r"transaction[\s_]*date"],
     "posting_date": [r"post(ing)?[\s_]*date", r"gl[\s_]*date", r"entry[\s_]*date", r"accounting[\s_]*date"],
     "supplier_name": [r"(supplier|vendor|creditor|payee|seller)[\s_]*(name)?$", r"(supplier|vendor)[\s_]*name", r"party[\s_]*name"],
-    "supplier_id": [r"(supplier|vendor|creditor)[\s_]*(id|code|no|number|key)$", r"^vendor$"],
+    "supplier_id": [r"(supplier|vendor|creditor|payee)[\s_]*(id|code|no|nr|num|number|#|key|ref|account|acct)$",
+                    r"(supplier|vendor|creditor)[\s_]*(id|code|no|number|#)\b", r"^vendor$"],
     "supplier_tax_id": [r"gstin", r"\bvat[\s_]*(no|number|id|reg)", r"tax[\s_]*(id|no|number|reg)", r"\bpan\b", r"\babn\b", r"\bein\b", r"\bcnpj\b"],
     "description": [r"(line|item|material|product|service)?[\s_]*desc(ription)?", r"line[\s_]*text", r"short[\s_]*text", r"narration", r"memo", r"particulars", r"^text$", r"item[\s_]*name"],
     "item_code": [r"(material|item|product|part|sku|article)[\s_]*(no|num|number|code|id)?$", r"^sku$", r"part[\s_]*(no|number)"],
@@ -84,7 +85,9 @@ GENERIC_NP_RULES = [
 
 
 def _score_header(col: str, field: str) -> float:
-    c = col.strip().lower().replace("-", "_")
+    # 'Supplier No.' / 'Vendor-ID' / 'Vendor #' -> 'supplier no' / 'vendor id' / 'vendor #'
+    c = re.sub(r"[.\-:]+", " ", col.strip().lower()).strip()
+    c = re.sub(r"\s+", " ", c)
     for k, rx in enumerate(HEADER_HINTS.get(field, [])):
         if re.search(rx, c):
             return 1.0 - 0.1 * k
@@ -136,6 +139,10 @@ def heuristic_roles(prof: dict) -> dict:
                 v = min(p["avg_len"] / 30, 1.0) * p["alpha_rate"]
             elif f == "supplier_name":
                 v = p["alpha_rate"] * (1 if p["num_rate"] < 0.2 else 0)
+                if p["avg_len"] < 5 or _code_like(p["samples"]):
+                    v = -1                       # codes such as V10023 are ids, not names
+            elif f == "supplier_id":
+                v = 1.0 if (_code_like(p["samples"]) or p["num_rate"] > 0.8) else 0.2
             elif f == "status":
                 v = 1.0 if 1 < p["nunique"] <= 15 and p["alpha_rate"] > 0.8 else -1
             if h <= 0 or v < 0:
@@ -244,6 +251,36 @@ def _merge_roles(h: dict, l: dict | None, prof: dict) -> tuple[dict, list[str], 
     return roles, notes, {"context": context}
 
 
+def _code_like(samples: list) -> bool:
+    """Values like 'V10023', '100045', 'SUP-0042': short tokens with digits, no spaces."""
+    vals = [str(x).strip() for x in samples if str(x).strip()]
+    if not vals:
+        return False
+    hits = sum(1 for v in vals if re.fullmatch(r"[A-Za-z]{0,4}[-_#]?\d{2,}[A-Za-z0-9-]*", v))
+    return hits >= 0.8 * len(vals)
+
+
+def guess_dayfirst(values: pd.Series) -> bool | None:
+    """Decide day-first vs month-first from the values themselves.
+    Any second part above 12 (03/25/2024) means month first; any first part above 12
+    (25/03/2024) means day first; otherwise undecided (None)."""
+    v = values.astype(str).str.strip()
+    m = v.str.extract(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})")
+    m = m.dropna()
+    if m.empty:
+        return None
+    a, b = m[0].astype(int), m[1].astype(int)
+    if (b > 12).any() and not (a > 12).any():
+        return False
+    if (a > 12).any() and not (b > 12).any():
+        return True
+    return None
+
+
+def _uniq(seq):
+    return list(dict.fromkeys(x for x in seq if x))
+
+
 def _status_map(values: list[str]) -> dict:
     m = {"include": [], "CANCELLED": [], "NOT_APPROVED": []}
     unknown = []
@@ -257,8 +294,9 @@ def _status_map(values: list[str]) -> dict:
                 hit = code
                 break
         (m[hit] if hit else unknown).append(lv)
+    m = {k: _uniq(v) for k, v in m.items()}
     m["unknown_status_outcome"] = "NOT_APPROVED"
-    return m, unknown
+    return m, _uniq(unknown)
 
 
 # rough units of currency per 1 USD, only to tell the direction of a rate column
@@ -393,7 +431,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             notes.append(f"{p.name}: {groups[:2]} used as consistency groups (lines on one contract tend to "
                          f"share a category) (CHECK)")
         name = re.sub(r"[^a-z0-9]+", "_", p.stem.lower()).strip("_") or f"src{i}"
-        src = {"name": name, "file": [p.name, re.sub(r"\d+", "*", p.stem) + p.suffix],
+        src = {"name": name, "file": _uniq([p.name, re.sub(r"\d+", "*", p.stem) + p.suffix]),
                "record_id": {"column": roles.get("record_id", df.columns[0])},
                "amount_type": "net", "columns": cols}
         amt_col = roles.get("amount", "")
@@ -401,6 +439,16 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             src["amount_type"] = "gross"
             src["tax_rate_default"] = 0.0
             notes.append(f"{p.name}: amount `{amt_col}` looks gross -> tax removed (CHECK)")
+        # day-first or month-first, decided from the values of the date columns
+        votes = {guess_dayfirst(df[roles[f]]) for f in ("date", "posting_date") if f in roles} - {None}
+        if len(votes) == 1:
+            src["dayfirst"] = votes.pop()
+            notes.append(f"{p.name}: dates are {'day' if src['dayfirst'] else 'month'}-first (from values)")
+        elif len(votes) > 1:
+            notes.append(f"{p.name}: date columns disagree on day/month order (CHECK dayfirst)")
+        elif any(f in roles for f in ("date", "posting_date")):
+            notes.append(f"{p.name}: day/month order not decidable from values; ISO or textual dates "
+                         f"are parsed either way (CHECK dayfirst)")
         if "status" in roles:
             vals = sorted(df[roles["status"]].astype(str).map(clean_text).unique())[:50]
             smap, unknown = _status_map(vals)
