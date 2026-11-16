@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from pathlib import Path
 
 import numpy as np
@@ -37,45 +38,120 @@ PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLL SOS 
 TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL RCN""".split())
 
 # canonical field and its header patterns (earlier patterns score higher)
+# Each list is in order of preference; the first pattern scores highest. Translations of a
+# pattern (German, French, Spanish, Italian, Portuguese, Dutch) share its position.
 HEADER_HINTS = {
     "record_id": [r"^(line|record|row|txn|transaction|invoice[\s_]*line|entry)[\s_]?(id|key)$", r"^id$",
                   r"line[\s_]*id", r"(record|row|line)[\s_]*(no|number|#)$"],
-    "invoice_number": [r"inv(oice)?[\s_]*(no|num|number|#|id|ref)", r"^document[\s_]*(no|number)$", r"bill[\s_]*no"],
+    "invoice_number": [r"inv(oice)?[\s_]*(no|num|number|#|id|ref)|(rechnungs|beleg)[\s_-]*(nr|nummer)|"
+                       r"(n°|num[eé]ro)[\s_]*(de[\s_]*)?facture|(n[uú]mero|no)[\s_]*(de[\s_]*)?factura|"
+                       r"factuur[\s_]*(nr|nummer)",
+                       r"^document[\s_]*(no|number)$", r"bill[\s_]*no"],
     "invoice_line": [r"inv(oice)?[\s_]*line", r"^line[\s_]*(no|num|number)$", r"^item[\s_]*no$"],
-    "date": [r"inv(oice)?[\s_]*date", r"doc(ument)?[\s_]*date", r"bill[\s_]*date", r"purchase[\s_]*date",
-             r"order[\s_]*date", r"po[\s_]*date", r"^date$", r"txn[\s_]*date", r"transaction[\s_]*date",
-             r"receipt[\s_]*date"],
-    "posting_date": [r"post(ing)?[\s_]*date", r"gl[\s_]*date", r"entry[\s_]*date", r"accounting[\s_]*date",
+    "date": [r"inv(oice)?[\s_]*date|rechnungs[\s_]*datum|beleg[\s_]*datum|date[\s_]*(de[\s_]*)?facture|"
+             r"fecha[\s_]*(de[\s_]*)?factura|data[\s_]*(della[\s_]*|da[\s_]*)?fattura|factuur[\s_]*datum",
+             r"doc(ument)?[\s_]*date", r"bill[\s_]*date", r"purchase[\s_]*date",
+             r"order[\s_]*date", r"po[\s_]*date", r"^(date|datum|fecha|data)$", r"txn[\s_]*date",
+             r"transaction[\s_]*date", r"receipt[\s_]*date"],
+    "posting_date": [r"post(ing)?[\s_]*date|buchungs[\s_]*datum|date[\s_]*(de[\s_]*)?comptabilisation|"
+                     r"fecha[\s_]*(de[\s_]*)?contabiliza|boekings[\s_]*datum",
+                     r"gl[\s_]*date", r"entry[\s_]*date", r"accounting[\s_]*date",
                      r"creat(ion|ed)[\s_]*(date|on)", r"approv(al|ed)[\s_]*date"],
-    "supplier_name": [r"(supplier|vendor|creditor|payee|seller)[\s_]*(name)?$", r"(supplier|vendor)[\s_]*name", r"party[\s_]*name"],
-    "supplier_id": [r"(supplier|vendor|creditor|payee)[\s_]*(id|code|no|nr|num|number|#|key|ref|account|acct)$",
+    "supplier_name": [r"(supplier|vendor|creditor|payee|seller)[\s_]*(name)?$|"
+                      r"^(lieferant|kreditor|fournisseur|proveedor|fornitore|fornecedor|leverancier)(en)?"
+                      r"[\s_]*(name|nom|nombre|nome|naam)?$",
+                      r"(supplier|vendor)[\s_]*name", r"party[\s_]*name"],
+    "supplier_id": [r"(supplier|vendor|creditor|payee)[\s_]*(id|code|no|nr|num|number|#|key|ref|account|acct)$|"
+                    r"(lieferant|kreditor|fournisseur|proveedor|fornitore|fornecedor|leverancier)(en)?[\s_]*"
+                    r"(nr|nummer|no|id|code|codigo|numero|n°)",
                     r"(supplier|vendor|creditor)[\s_]*(id|code|no|number|#)\b", r"^vendor$"],
-    "supplier_tax_id": [r"gstin", r"\bvat[\s_]*(no|number|id|reg)", r"tax[\s_]*(id|no|number|reg)", r"\bpan\b", r"\babn\b", r"\bein\b", r"\bcnpj\b"],
-    "description": [r"(line|item|material|product|service)?[\s_]*desc(ription)?", r"line[\s_]*text", r"short[\s_]*text", r"narration", r"memo", r"particulars", r"^text$", r"item[\s_]*name"],
-    "item_code": [r"(material|item|product|part|sku|article)[\s_]*(no|num|number|code|id)?$", r"^sku$", r"part[\s_]*(no|number)"],
-    "quantity": [r"^(qty|quantity)", r"quantity", r"\bqty\b"],
+    "supplier_tax_id": [r"gstin", r"\bvat[\s_]*(no|number|id|reg)", r"tax[\s_]*(id|no|number|reg)", r"\bpan\b",
+                        r"\babn\b", r"\bein\b", r"\bcnpj\b"],
+    "description": [r"(line|item|material|product|service)?[\s_]*desc(ription)?|bezeichnung|beschreibung|"
+                    r"positionstext|libell|d[eé]signation|descripci[oó]n|descrizione|descri[cç][aã]o|omschrijving",
+                    r"line[\s_]*text|buchungstext", r"short[\s_]*text", r"narration", r"memo", r"particulars",
+                    r"^text$", r"item[\s_]*name"],
+    "item_code": [r"(material|item|product|part|sku|article)[\s_]*(no|num|number|code|id)?$|"
+                  r"(material|artikel)[\s_]*(nr|nummer)|r[eé]f[eé]rence[\s_]*article|"
+                  r"c[oó]digo[\s_]*(de[\s_]*)?art[ií]culo",
+                  r"^sku$", r"part[\s_]*(no|number)"],
+    "quantity": [r"^(qty|quantity|menge|quantit[eé]|cantidad|quantit[aà]|quantidade|aantal)", r"quantity",
+                 r"\bqty\b"],
     "uom": [r"\buom\b", r"unit[\s_]*of[\s_]*measure", r"^unit$"],
     "unit_price": [r"unit[\s_]*(price|cost|rate)", r"^price$", r"^rate$"],
-    "amount": [r"net[\s_]*(amount|value|amt)", r"(line|invoice|item)?[\s_]*amount", r"^value", r"amount", r"spend", r"total"],
-    "tax_amount": [r"(vat|tax|gst)[\s_]*(amount|amt|value)"],
-    "tax_rate": [r"(vat|tax|gst)[\s_]*(rate|%|pct|percent)", r"^(vat|tax|gst)$"],
-    "currency": [r"^(currency|ccy|curr|cur)([\s_]*code)?$", r"currency"],
-    "fx_rate": [r"(fx|exchange|currency|conversion)[\s_]*rate", r"^rate[\s_]*to"],
-    "status": [r"status", r"state$", r"approval"],
-    "po_number": [r"\bpo\b[\s_]*(no|num|number|#)?$", r"purchase[\s_]*order", r"^po[\s_]*(ref|reference)"],
-    "gl_account": [r"gl[\s_]*(account|acct|code)?$", r"(account|acct)[\s_]*(code|no|number)$", r"^account$", r"nominal"],
+    "amount": [r"net[\s_]*(amount|value|amt)|netto[\s_]*betrag|montant[\s_]*ht|importe[\s_]*neto|importo[\s_]*netto",
+               r"(line|invoice|item)?[\s_]*amount|^(netto|brutto|rechnungs|gesamt|zeilen|positions)?[\s_]*betrag$|"
+               r"^(montant|importe|importo|bedrag|valor)\b",
+               r"^value", r"amount", r"spend", r"total"],
+    "tax_amount": [r"(vat|tax|gst)[\s_]*(amount|amt|value)|steuer[\s_]*betrag|(mwst|ust)[\s_-]*betrag|"
+                   r"(montant|importe|importo|bedrag)[\s_]*(de[\s_]*la[\s_]*|del[\s_]*)?(tva|iva|btw)"],
+    "tax_rate": [r"(vat|tax|gst)[\s_]*(rate|%|pct|percent)|(mwst|ust|steuer)[\s_-]*satz|taux[\s_]*(de[\s_]*)?tva|"
+                 r"(tipo|tasa)[\s_]*(de[\s_]*)?iva|aliquota",
+                 r"^(vat|tax|gst|mwst|ust|tva|iva|btw)$"],
+    "currency": [r"^(currency|ccy|curr|cur|w[aä]hrung|waehrung|devise|moneda|valuta|moeda|munt)([\s_]*code)?$",
+                 r"currency"],
+    "fx_rate": [r"(fx|exchange|currency|conversion)[\s_]*rate|wechselkurs|taux[\s_]*de[\s_]*change|"
+                r"tipo[\s_]*de[\s_]*cambio|wisselkoers", r"^rate[\s_]*to"],
+    "status": [r"status|^(statut|estado|stato)$", r"state$", r"approval"],
+    "po_number": [r"\bpo\b[\s_]*(no|num|number|#)?$|bestell[\s_-]*(nr|nummer)", r"purchase[\s_]*order",
+                  r"^po[\s_]*(ref|reference)"],
+    "gl_account": [r"gl[\s_]*(account|acct|code)?$|sachkonto|compte[\s_]*g[eé]n[eé]ral|cuenta[\s_]*contable",
+                   r"(account|acct)[\s_]*(code|no|number)$", r"^(account|konto)$", r"nominal"],
     "gl_description": [r"(gl|account|acct)[\s_]*(desc|description|name)", r"expense[\s_]*type", r"spend[\s_]*category"],
-    "cost_centre": [r"cost[\s_]*cent(er|re)", r"\bcc\b", r"department"],
-    "document_type": [r"doc(ument)?[\s_]*type", r"transaction[\s_]*type", r"invoice[\s_]*type"],
-    "entity": [r"company[\s_]*code", r"entity", r"business[\s_]*unit", r"legal"],
+    "cost_centre": [r"cost[\s_]*cent(er|re)|kostenstelle|centre[\s_]*de[\s_]*co[uû]t|centro[\s_]*de[\s_]*coste",
+                    r"\bcc\b", r"department"],
+    "document_type": [r"doc(ument)?[\s_]*type|belegart", r"transaction[\s_]*type", r"invoice[\s_]*type"],
+    "entity": [r"company[\s_]*code|buchungskreis", r"entity", r"business[\s_]*unit", r"legal"],
 }
 CONTEXT_HINTS = [r"category", r"commodity", r"type", r"class", r"group", r"segment", r"plant", r"site",
                  r"region", r"capex|opex", r"buyer", r"contract"]
 
-STATUS_WORDS = {"include": ["paid", "approved", "posted", "cleared", "complete", "closed", "processed"],
-                "CANCELLED": ["cancel", "void", "reversed", "deleted"],
-                "NOT_APPROVED": ["reject", "hold", "submitted", "dispute", "pending", "draft", "review", "await",
-                                 "parked", "blocked", "open"]}
+# Status keywords, matched at the start of a word after accents are removed, so "unpaid" is not
+# "paid". English, German, French, Spanish, Italian, Portuguese and Dutch. CANCELLED is tested
+# first, then NOT_APPROVED (so "not approved" wins over "approved"), then include.
+STATUS_WORDS = {
+    "CANCELLED": ["cancel", "void", "reversed", "reversal", "deleted", "annul", "withdrawn", "storn", "geloscht",
+                  "geloescht", "anulad", "cancelad", "annullat", "stornat", "geannuleerd", "ingetrokken"],
+    "NOT_APPROVED": ["not approved", "unapproved", "not paid", "not posted", "unposted", "not received", "reject", "declin", "denied", "hold", "submitted",
+                     "dispute", "pending", "draft", "review", "await", "parked", "blocked", "open", "in progress",
+                     "in process", "on hold",
+                     "nicht genehmigt", "nicht freigegeben", "abgelehnt", "gesperrt", "offen", "entwurf",
+                     "in prufung", "in pruefung", "ausstehend", "angehalten", "zuruckgewiesen", "zurueckgewiesen",
+                     "geparkt", "vorerfasst",
+                     "non approuve", "rejete", "refuse", "en attente", "brouillon", "bloque", "en cours", "litige",
+                     "suspendu",
+                     "no aprobado", "rechazad", "pendiente", "borrador", "bloquead", "en revision", "denegad",
+                     "non approvat", "respint", "in attesa", "bozza", "bloccat", "sospes",
+                     "nao aprovado", "rejeitad", "pendente", "rascunho", "em analise",
+                     "niet goedgekeurd", "afgewezen", "in behandeling", "concept", "geblokkeerd", "wachtend"],
+    "include": ["paid", "partially paid", "approved", "authori", "posted", "cleared", "complete", "closed",
+                "processed", "received", "invoiced", "billed", "settled", "released", "matched", "accepted",
+                "booked", "confirmed", "reconciled", "finali", "delivered", "fulfilled", "ready for pay",
+                "scheduled for pay", "payment scheduled",
+                "bezahlt", "gezahlt", "beglichen", "genehmigt", "freigegeben", "gebucht", "verbucht", "erledigt",
+                "abgeschlossen", "geliefert", "erhalten",
+                "paye", "approuve", "valide", "comptabilise", "regle", "solde", "cloture", "termine", "recu",
+                "factur",
+                "pagad", "aprobad", "contabilizad", "liquidad", "cerrad", "recibid", "completad",
+                "pagat", "approvat", "registrat", "contabilizzat", "saldat", "ricevut", "complet",
+                "pago", "aprovad", "lancad", "quitad", "recebid", "concluid",
+                "betaald", "goedgekeurd", "geboekt", "afgerond", "voldaan", "ontvangen", "verwerkt"],
+}
+
+
+def _fold(text: str) -> str:
+    """Lower case without accents: 'Payé' -> 'paye', 'Geprüft' -> 'gepruft', 'ß' -> 'ss'."""
+    t = unicodedata.normalize("NFKD", str(text).replace("ß", "ss"))
+    return "".join(ch for ch in t if not unicodedata.combining(ch)).lower().strip()
+
+
+def _status_keyword(value: str) -> str | None:
+    lv = _fold(value)
+    for code in ("CANCELLED", "NOT_APPROVED", "include"):
+        if any(re.search(r"(?<![a-z])" + re.escape(w), lv) for w in STATUS_WORDS[code]):
+            return code
+    return None
+
 
 GENERIC_NP_RULES = [
     {"name": "intercompany_text", "field": "description",
@@ -85,6 +161,9 @@ GENERIC_NP_RULES = [
     {"name": "finance_and_other_non_supplier", "field": "description",
      "pattern": r"(?i)\b(interest (charge|expense|payment|on loan)s?|bank (charge|fee)s?|royalt(y|ies)|dividends?|loan repayment|revenue share|partner billing|penalty interest|salary|salaries|payroll|donation)\b"},
 ]
+
+
+PLACEHOLDERS = {"-", "--", "---", "n/a", "na", "n.a.", "#n/a", "null", "none", "nil", "?", ".", "nan", "tbd"}
 
 
 def _score_header(col: str, field: str) -> float:
@@ -103,13 +182,16 @@ def profile_columns(df: pd.DataFrame, n=3000) -> dict:
     for c in s.columns:
         v = s[c].astype(str).map(clean_text)
         nb = v[v != ""]
-        num = parse_number_series(nb) if len(nb) else pd.Series(dtype=float)
+        filler = nb.str.strip().str.lower().isin(PLACEHOLDERS)
+        nbv = nb[~filler]          # '-', 'N/A' and the like are blanks for the numeric parse rate
+        num = parse_number_series(nbv) if len(nbv) else pd.Series(dtype=float)
         dt = parse_date_series(nb.head(500)) if len(nb) else pd.Series(dtype="datetime64[ns]")
         prof[c] = {
             "blank": float((v == "").mean()),
             "unique_ratio": float(nb.nunique() / max(len(nb), 1)),
             "nunique": int(nb.nunique()),
-            "num_rate": float(num.notna().mean()) if len(nb) else 0.0,
+            "num_rate": float(num.notna().mean()) if len(nbv) else 0.0,
+            "placeholder_rate": float(filler.mean()) if len(nb) else 0.0,
             "date_rate": float(dt.notna().mean()) if len(nb) else 0.0,
             "ccy_rate": float(nb.str.upper().isin(ISO_CCY).mean()) if len(nb) else 0.0,
             "avg_len": float(nb.str.len().mean()) if len(nb) else 0.0,
@@ -130,6 +212,8 @@ def heuristic_roles(prof: dict) -> dict:
             v = 0.0
             if f in ("amount", "tax_amount", "unit_price", "quantity", "fx_rate", "tax_rate"):
                 v = p["num_rate"] if p["num_rate"] > 0.9 else -1
+                if f == "amount" and v < 0 and h >= 0.6 and p["num_rate"] > 0.6:
+                    v = p["num_rate"]       # the header says amount and most values parse
             elif f in ("date", "posting_date"):
                 v = p["date_rate"] if p["date_rate"] > 0.6 else -1
             elif f == "currency":
@@ -254,6 +338,42 @@ def _merge_roles(h: dict, l: dict | None, prof: dict) -> tuple[dict, list[str], 
     return roles, notes, {"context": context}
 
 
+GROSS_HEADER = r"(?i)gross|brutto|\bttc\b|\bincl|\binkl|including[\s_]*(vat|tax|gst)|with[\s_]*(vat|tax|gst)|" \
+               r"iva[\s_]*incluid|ivato"
+NET_HEADER = r"(?i)\bnet\b|netto|\bht\b|\bneto\b|excl|exkl|before[\s_]*tax|ohne[\s_]*(mwst|ust)"
+_STD_RATES = np.array([0.05, 0.06, 0.07, 0.077, 0.08, 0.081, 0.09, 0.1, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18,
+                       0.19, 0.2, 0.21, 0.22, 0.23, 0.24, 0.25, 0.27])
+
+
+def _looks_gross(df: pd.DataFrame, amt_col: str, tax_amt_col: str | None, tax_rate_col: str | None
+                 ) -> tuple[bool, str]:
+    """Is the amount column gross of tax? The header decides when it says net or gross. Otherwise,
+    with a tax amount column, the values decide: tax divided by (amount - tax) lands on a standard
+    VAT rate for gross amounts, tax divided by amount does for net ones."""
+    if re.search(NET_HEADER, amt_col):
+        return False, "header says net"
+    if re.search(GROSS_HEADER, amt_col):
+        return True, "header says gross"
+    if tax_amt_col:
+        a = parse_number_series(df[amt_col].astype(str))
+        t = parse_number_series(df[tax_amt_col].astype(str))
+        ok = a.notna() & t.notna() & (t.abs() > 0.005) & (a.abs() > t.abs())
+        if ok.sum() >= 10:
+            def hits(r):
+                r = r.abs().values[:, None]
+                return float((np.abs(r - _STD_RATES[None, :]).min(axis=1) < 0.0025).mean())
+            g, n = hits(t[ok] / (a[ok] - t[ok])), hits(t[ok] / a[ok])
+            if g > n and g > 0.5:
+                return True, f"tax over amount less tax is a standard rate on {g:.0%} of lines"
+            if n >= g and n > 0.5:
+                return False, f"tax over amount is a standard rate on {n:.0%} of lines"
+        if re.search(r"(?i)total|summe|gesamt", amt_col):
+            return True, "a total next to a tax amount"
+    elif tax_rate_col and re.search(r"(?i)total|summe|gesamt", amt_col):
+        return True, "a total next to a tax rate"
+    return False, ""
+
+
 def _code_like(samples: list) -> bool:
     """Values like 'V10023', '100045', 'SUP-0042': short tokens with digits, no spaces."""
     vals = [str(x).strip() for x in samples if str(x).strip()]
@@ -284,22 +404,67 @@ def _uniq(seq):
     return list(dict.fromkeys(x for x in seq if x))
 
 
-def _status_map(values: list[str]) -> dict:
+def llm_status_map(values: list[str]) -> dict[str, str] | None:
+    """One Claude call: each distinct status value to include, CANCELLED or NOT_APPROVED, by the
+    brief's rule (only approved or paid lines count). None without a key or on any error."""
+    if not values or not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    try:
+        import anthropic
+    except Exception:
+        return None
+    schema = {"type": "object", "properties": {"mapping": {"type": "array", "items": {
+        "type": "object", "properties": {"value": {"type": "string", "enum": values},
+                                         "outcome": {"type": "string",
+                                                     "enum": ["include", "CANCELLED", "NOT_APPROVED",
+                                                              "unrelated"]}},
+        "required": ["value", "outcome"], "additionalProperties": False}}},
+        "required": ["mapping"], "additionalProperties": False}
+    prompt = ("These are the distinct values of the status column of a company's purchase invoice lines. "
+              "Map each value to one outcome. include: the line is approved or paid, or further along "
+              "(posted, received, invoiced, settled, matched, closed). CANCELLED: cancelled, voided, reversed "
+              "or deleted. NOT_APPROVED: an approval or payment state that does not count yet, such as rejected, on "
+              "hold, draft, pending or in review. unrelated: the value says nothing about approval, payment or "
+              "cancellation (for example a contract type or a category). Values may be in any language.\nValues: " + json.dumps(values, ensure_ascii=False))
+    try:
+        c = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"], base_url="https://api.anthropic.com")
+        r = c.messages.create(model="claude-opus-5-5", max_tokens=4000,
+                              output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}},
+                              messages=[{"role": "user", "content": prompt}])
+        text = next(b.text for b in r.content if b.type == "text")
+        return {m["value"]: m["outcome"] for m in json.loads(text)["mapping"]}
+    except Exception as e:
+        log.warning("LLM status mapping unavailable: %s", str(e)[:150])
+        return None
+
+
+def _status_map(values: list[str], llm: dict[str, str] | None = None) -> tuple[dict, list[str], list[str]]:
+    """Keywords first; Claude's answer for values the keywords do not know. Returns the map,
+    the values still unknown, and notes where Claude and the keywords disagree."""
     m = {"include": [], "CANCELLED": [], "NOT_APPROVED": []}
-    unknown = []
+    unknown, notes, unrelated = [], [], []
+    llm = llm or {}
     for v in values:
         lv = v.strip().lower()
         if not lv:
             continue
-        hit = None
-        for code in ("CANCELLED", "NOT_APPROVED", "include"):
-            if any(w in lv for w in STATUS_WORDS[code]):
-                hit = code
-                break
+        kw = _status_keyword(v)
+        ai = llm.get(v)
+        if ai == "unrelated":
+            if not kw:
+                unrelated.append(lv)
+                continue
+            ai = None
+        if kw and ai and ai != kw:
+            notes.append(f"status `{v}`: keywords say {kw}, Claude says {ai}; kept {kw} (CHECK)")
+        hit = kw or ai
         (m[hit] if hit else unknown).append(lv)
     m = {k: _uniq(v) for k, v in m.items()}
+    if unrelated:
+        m["include"] = _uniq(m["include"] + unrelated)
+        notes.append(f"status values {unrelated[:6]} say nothing about approval, so they are included (CHECK)")
     m["unknown_status_outcome"] = "NOT_APPROVED"
-    return m, _uniq(unknown)
+    return m, _uniq(unknown), notes
 
 
 # rough units of currency per 1 USD, only to tell the direction of a rate column
@@ -355,11 +520,48 @@ def _taxonomy_block(path: Path) -> dict:
                  "name_column": nc}
         return block, t
     lvl = [c for c in cols if re.search(r"(?i)(level|lvl|\bl)[\s_-]?\d|l\d$|category[\s_]*l?\d", c)]
-    desc = [c for c in cols if re.search(r"(?i)desc|definition|keywords|examples|scope", c)]
-    block = {"file": path.name, "format": "wide", "level_columns": lvl or [c for c in cols if c not in desc]}
+    desc = [c for c in cols if re.search(r"(?i)desc|definition|keywords|examples|scope", c)
+            and not re.search(r"(?i)(level|lvl|\bl)[\s_-]?\d", c)]
+    levels = lvl or [c for c in cols if c not in desc]
+    levels, tnotes = _name_columns(t, levels)
+    block = {"file": path.name, "format": "wide", "level_columns": levels}
     if desc:
         block["description_column"] = desc[0]
+    if len(levels) > 4:
+        tnotes.append(f"tree has {len(levels)} level columns {levels}; the output has 4 levels (CHECK level_columns)")
+    block["_notes"] = tnotes
     return block, t
+
+
+def _tree_code_column(values: pd.Series) -> bool:
+    """A tree column of codes (10, 4310, 43211500, A1, IT-02) rather than names."""
+    v = values.astype(str).map(clean_text)
+    v = v[v != ""].drop_duplicates()
+    if v.empty:
+        return False
+    code = v.str.fullmatch(r"[A-Za-z]{0,4}[-_.#]?\d[\dA-Za-z.\-]*") & (v.str.len() <= 14)
+    return bool(code.mean() >= 0.8)
+
+
+def _level_key(col: str) -> str:
+    """'L1 Code' and 'L1 Name' share key 'l1'; 'Segment Code' and 'Segment Title' share 'segment'."""
+    k = re.sub(r"(?i)\b(code|id|no|nr|number|key|name|title|label|bezeichnung|nom|nombre|nome|naam)\b", " ",
+               col.lower())
+    return re.sub(r"[^a-z0-9]+", "", k)
+
+
+def _name_columns(t: pd.DataFrame, levels: list[str]) -> tuple[list[str], list[str]]:
+    """Drop code columns when the tree also has name columns, so l1 to l4 are names."""
+    is_code = {c: _tree_code_column(t[c]) for c in levels}
+    names = [c for c in levels if not is_code[c]]
+    if not names or len(names) == len(levels):
+        return levels, []
+    dropped = [c for c in levels if is_code[c]]
+    keys = [_level_key(c) for c in names]
+    notes = [f"tree code columns {dropped} dropped; levels are the name columns {names} (CHECK)"]
+    if len(set(keys)) < len(keys):
+        notes.append(f"tree name columns share a level key {keys} (CHECK level_columns order)")
+    return names, notes
 
 
 def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm: bool = True,
@@ -372,12 +574,14 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             raise FileNotFoundError(f"taxonomy {taxonomy} not found in {data_dir}")
         tax_path = hits[0]
     tax_block, tax_df = _taxonomy_block(tax_path)
+    tree_notes = [f"{tax_path.name}: {n}" for n in tax_block.pop("_notes", [])]
     cand = [data_dir / f for f in files] if files else \
         sorted(p for p in data_dir.iterdir() if p.is_file() and p.suffix.lower() in
                (".csv", ".tsv", ".txt", ".xlsx", ".xls") and p.resolve() != tax_path.resolve()
                and not p.name.startswith("."))
     sources, notes, fx_table = [], [], None
     set_aside: list[str] = []      # files skipped as an FX table or labels; one may be the only transaction file
+    warnings_top: list[str] = []   # printed first in the draft header
     window_years: list[tuple[int, int]] = []
     fx_sem_any = None
     consistency_groups: list[str] = []
@@ -459,10 +663,21 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                "record_id": {"column": roles.get("record_id", df.columns[0])},
                "amount_type": "net", "columns": cols}
         amt_col = roles.get("amount", "")
-        if re.search(r"(?i)gross|incl|total", amt_col) and ("tax_rate" in roles or "tax_amount" in roles):
-            src["amount_type"] = "gross"
-            src["tax_rate_default"] = 0.0
-            notes.append(f"{p.name}: amount `{amt_col}` looks gross, so tax is removed (CHECK)")
+        if not amt_col:
+            cols["amount"] = "TODO"
+            warnings_top.append(f"WARNING {p.name}: no amount column found; set columns.amount (TODO)")
+        else:
+            gross, why = _looks_gross(df, amt_col, roles.get("tax_amount"), roles.get("tax_rate"))
+            if gross:
+                src["amount_type"] = "gross"
+                src["tax_rate_default"] = 0.0
+                how = (f"`{roles['tax_amount']}` is subtracted" if "tax_amount" in roles else
+                       f"the rate in `{roles['tax_rate']}` is removed" if "tax_rate" in roles else
+                       "no tax column was found, so nothing is removed until tax_rate_default is set")
+                notes.append(f"{p.name}: amount `{amt_col}` looks gross ({why}); {how} (CHECK amount_type)")
+            if prof[amt_col]["placeholder_rate"] > 0:
+                notes.append(f"{p.name}: {prof[amt_col]['placeholder_rate']:.0%} of `{amt_col}` values are "
+                             f"placeholders such as '-' or 'N/A'; those lines get spend 0 (flag UNPARSED_AMOUNT)")
         # plausible year window from the data itself (1st to 99th percentile, plus one year)
         yrs = []
         for f in ("date", "posting_date"):
@@ -483,11 +698,25 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             notes.append(f"{p.name}: day/month order not decidable from values; ISO or textual dates "
                          f"are parsed either way (CHECK dayfirst)")
         if "status" in roles:
-            vals = sorted(df[roles["status"]].astype(str).map(clean_text).unique())[:50]
-            smap, unknown = _status_map(vals)
+            st = df[roles["status"]].astype(str).map(clean_text)
+            vals = [v for v in st.value_counts().index if v][:60]
+            smap, unknown, snotes = _status_map(vals, llm_status_map(vals) if use_llm else None)
             src["status_map"] = smap
+            notes += [f"{p.name}: {n}" for n in snotes]
+            if unknown and len(unknown) == len({v.strip().lower() for v in vals}):
+                # no value is an approval, payment or cancellation word: not a status column
+                notes.append(f"{p.name}: `{roles['status']}` values {vals[:6]} are not approval or payment "
+                             f"states, so the column is not used as status (CHECK)")
+                cols.pop("status", None)
+                src.pop("status_map", None)
+                unknown = []
             if unknown:
                 notes.append(f"{p.name}: status values not recognised {unknown}, treated as NOT_APPROVED (CHECK)")
+            excl = st.str.strip().str.lower().isin(set(smap["CANCELLED"]) | set(smap["NOT_APPROVED"]) |
+                                                   set(unknown))
+            if "status" in cols and excl.mean() > 0.3:
+                warnings_top.append(f"WARNING {p.name}: the drafted status_map excludes {excl.mean():.0%} of lines "
+                                    f"({st[excl].value_counts().head(6).to_dict()}). Check status_map before running.")
         if "currency" in roles:
             cur = df[roles["currency"]].astype(str).str.strip().str.upper()
             top = cur[cur != ""].value_counts()
@@ -559,7 +788,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         notes.append("More than one transaction file: if they overlap, enable cross_source and set primary/secondary (CHECK)")
     header = ["# DRAFT config generated by `run.py init-config`. Review every CHECK note, then run:",
               f"#   python run.py --config {out} --data {data} --out submission/arnav_mishra__{company}.csv",
-              "# Review notes:"] + [f"#  - {n}" for n in notes] + [""]
+              "# Review notes:"] + [f"#  - {n}" for n in warnings_top + tree_notes + notes] + [""]
     outp = Path(out)
     outp.parent.mkdir(parents=True, exist_ok=True)
     outp.write_text("\n".join(header) + yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True, width=110))

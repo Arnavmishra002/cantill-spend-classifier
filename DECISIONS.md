@@ -16,7 +16,9 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
    chosen category.
 4. Status. Paid, approved, posted and complete count. Cancelled, void and reversed are `CANCELLED`. Rejected, on
    hold, pending, draft, disputed and submitted are `NOT_APPROVED`. A status value the map does not know is
-   `NOT_APPROVED`, because the brief says only approved or paid lines count, and the run summary lists it.
+   `NOT_APPROVED`, because the brief says only approved or paid lines count, and the run summary lists it. When
+   status rules exclude more than 30% of lines or spend, `check-config` and the run summary print a WARNING,
+   because an unrecognised status vocabulary would otherwise exclude a whole company without an error.
 5. Precedence when a line qualifies twice: `CANCELLED`, `NOT_APPROVED`, `NON_PROCUREMENT`, `DUPLICATE`.
 6. Dates. Any layout is parsed. A year outside 1900 to 2200 is flagged `IMPOSSIBLE_DATE` and treated as missing;
    no line is dropped for a bad date.
@@ -82,7 +84,7 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     than 95 days from the line's date is stale (the shipped table stops in 2020 for ARS): it never judges a line
     rate and fills a rate only after the file's own rates. `FX_PUBLIC_TABLE` marks only lines in another currency
     than the reporting one that took a public rate.
-25. Supplier de-duplication: legal suffixes stripped, OCR repair, a key without spaces, union-find over name, ID and
+25. Supplier de-duplication: legal suffixes stripped (including Quebec and French forms such as Ltée and SENC), OCR repair, a key without spaces, union-find over name, ID and
     tax ID, fuzzy matching with conservative thresholds. A name with more than 3 IDs (sundry, one-time vendor, tax
     office) or an ID with more than 3 unrelated names never links suppliers. On A without labels, precision and
     recall are 1.00 on named suppliers.
@@ -97,6 +99,14 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     is read as an FX table only when it has 5 columns or fewer, with currency, rate and month columns, and another
     data file exists. A file named with `--files`, or the only data file, is always read as transactions. If
     init-config still fails, `configs/company_c_template.yaml` is a complete config to fill in by hand.
+    Status words are matched in English, German, French, Spanish, Italian, Portuguese and Dutch, at the start of a
+    word, so "unpaid" is never "paid". With a key, one Claude call maps the remaining status values; where Claude and
+    the keywords disagree, the keywords win and the draft says so. A column whose values are not status words at
+    all (A's contract status) is not used as status. A tree with code and name columns keeps the name columns, so
+    l1 to l4 are names. An amount is drafted gross when its header says gross (brutto, TTC, incl.) or when tax
+    divided by amount less tax lands on a standard VAT rate more often than tax divided by amount. Placeholders such
+    as "-" and "N/A" do not stop a column from being the amount; with no amount column the draft says `TODO`.
+    Checked on two synthetic companies built for this (tests/synthetic_data.py).
 
 ## Classification
 

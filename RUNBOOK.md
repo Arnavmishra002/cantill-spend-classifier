@@ -38,7 +38,8 @@ python run.py init-config --data data/C --taxonomy "<tree file name>" --company 
 python run.py check-config --config configs/company_c.yaml --data data/C
 ```
 
-If `init-config` stops with an error, use the template instead (see "If something breaks" below).
+`init-config` prints any WARNING lines at the end; they are also at the top of the config. Read them first. If
+`init-config` stops with an error, use the template instead (see "If something breaks" below).
 
 Review `configs/company_c.yaml` and the `check-config` output (10 minutes at most):
 
@@ -51,10 +52,14 @@ Review `configs/company_c.yaml` and the `check-config` output (10 minutes at mos
       converts other currencies to USD (lines are flagged `FX_PUBLIC_TABLE`).
 - [ ] `date` is the invoice date, `posting_date` if present; `dayfirst` was decided from the values.
 - [ ] `supplier_name`, `supplier_id`, `description`, `item_code`, `gl_description`, `context` look sensible.
-- [ ] `status_map`: paid and approved are included; cancelled is CANCELLED; rejected, on hold and the like are
-      NOT_APPROVED.
+- [ ] `status_map`: paid, approved, received, posted and the like are included; cancelled is CANCELLED; rejected,
+      on hold and the like are NOT_APPROVED. Values in other languages are mapped too. If `check-config` prints
+      "WARNING: status rules exclude ..." (more than 30% of lines or spend), fix `status_map` before running: an
+      unrecognised status word excludes every line that carries it.
 - [ ] `non_procurement`: keep the generic tax, intercompany and finance rules; check the drafted GL account list.
-- [ ] `taxonomy.level_columns` are in order L1 to L4 (or `format: parent_child`).
+- [ ] `taxonomy.level_columns` are the name columns in order L1 to L4, not code columns (or `format: parent_child`).
+- [ ] `amount_type`: gross when the amount includes VAT (Brutto, TTC, incl.); then `tax_amount` or `tax_rate` is
+      mapped. `columns.amount` is not `TODO`.
 - [ ] `check-config` shows parse rates near 100% for amount and date, and plausible exclusions.
 
 ## 3. Run the three companies
@@ -85,7 +90,7 @@ missing.
 ## 4. Check
 
 - [ ] Three `=== RUN OK ===` blocks; row counts equal input rows.
-- [ ] Exclusion counts look plausible.
+- [ ] Exclusion counts look plausible, and no summary line says "WARNING : status rules exclude ...".
 - [ ] The reconcile line shows input = included + excluded.
 - [ ] In `out/arnav_mishra__C_report.json`, `classification.class_source_lines` is mostly `llm`, not `retrieval`.
 - [ ] Spot-check 10 lines of C in `out/arnav_mishra__C_audit.csv` (description against l1 to l4).

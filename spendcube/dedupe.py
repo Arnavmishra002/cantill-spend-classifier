@@ -35,6 +35,11 @@ DEFAULT_LEGAL_SUFFIXES = [
     "SPA", "S P A", "BV", "NV", "OY", "AB", "AS", "KFT", "SP Z O O", "SPZOO", "DOO", "D O O",
     "LTDA", "EIRELI", "ME", "CC", "NPC", "SOC", "PJSC", "OOO", "ZAO", "OAO", "PTE", "BHD",
     "SDN BHD", "SDN", "KK", "TBK", "CIA", "Y CIA", "AND CO", "ET CIE", "THE",
+    "LTEE", "LIMITEE", "S E N C R L", "SENCRL", "S E N C", "SENC", "SCS", "SNC", "SCA", "SASU", "EURL",
+    "SAU", "SL", "SLU", "SPRL", "SRLS", "SAPA", "UG", "OHG", "EG", "EV", "MBH", "GMBH CO KG", "KGAA",
+    "LDA", "SGPS", "VOF", "CV", "BVBA", "APS", "ASA", "OYJ",
+    "S A DE C V", "S A", "S L", "S L U", "S A U", "S A S", "S A R L", "S R L", "B V", "N V", "E V", "S C S",
+    "S N C", "S P R L", "S DE R L", "SDERL",
 ]
 
 

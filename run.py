@@ -65,6 +65,8 @@ def cmd_run(a):
     unmapped = {k: v for k, v in (rep.get("rules") or {}).items() if k.startswith("unmapped_status")}
     for k, vals in unmapped.items():
         print(f"WARNING     : status values not in the status map, treated as NOT_APPROVED: {vals}")
+    for w in rep.get("warnings") or []:
+        print(f"WARNING     : {w}")
     print(f"class source: {rep['classification'].get('class_source_lines')}")
     if health.get("enabled") and not health.get("usable"):
         print("LLM         : NOT USED. " + health.get("message", "no provider answered"))
@@ -87,6 +89,9 @@ def cmd_init(a):
     except _input_errors() + (ValueError,) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
+    for line in Path(path).read_text().splitlines():
+        if line.startswith("#  - WARNING"):
+            print(line[5:])
     print(f"Drafted config written to {path}. Review the TODO/CHECK comments, then run it.")
     return 0
 

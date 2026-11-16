@@ -49,7 +49,7 @@ sources:
     po_number: CHANGE_ME_po_number
     tax_rate: CHANGE_ME_tax_rate              # only with amount_type gross
   status_map:                    # lower case values as they appear in the status column
-    include: [paid, approved, posted, complete, completed, closed]
+    include: [paid, approved, posted, complete, completed, closed, received, invoiced, settled, matched, released]
     CANCELLED: [cancelled, canceled, void, voided, reversed]
     NOT_APPROVED: [rejected, on hold, pending, draft, disputed, submitted, open]
     unknown_status_outcome: NOT_APPROVED

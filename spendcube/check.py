@@ -13,7 +13,7 @@ import pandas as pd
 from .clean import clean
 from .config import load_config
 from .ingest import ingest_all
-from .spend_rules import apply_rules, resolve_codes
+from .spend_rules import apply_rules, resolve_codes, status_exclusion_warning
 from .taxonomy import load_taxonomy
 
 NUMERIC = {"amount", "quantity", "unit_price", "tax_amount", "tax_rate", "fx_rate"}
@@ -57,6 +57,10 @@ def check_config(config: str, data: str) -> str:
     apply_rules(df, cfg)
     resolve_codes(df, cfg)
     flags = df["flags"].str.split(";").explode()
+    sw = status_exclusion_warning(df, float((cfg.get("status") or {}).get("warn_above_share", 0.30)))
+    if sw:
+        out.insert(0, f"WARNING: {sw}\n")
+        out.append(f"\nWARNING: {sw}")
     out.append(f"\nflags: {flags[flags != ''].value_counts().to_dict()}")
     out.append(f"exclusions: {df['exclusion_reason'].replace('', 'INCLUDED').value_counts().to_dict()}")
     out.append(f"rules fired: {df.loc[df['exclusion_rule'] != '', 'exclusion_rule'].value_counts().head(12).to_dict()}")

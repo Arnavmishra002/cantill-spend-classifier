@@ -16,7 +16,7 @@ from .export import build_output, sidecar_path, template_columns, write_outputs
 from .ingest import ingest_all
 from .match import match_sources
 from .paths import REPO_ROOT
-from .spend_rules import apply_rules, resolve_codes
+from .spend_rules import apply_rules, resolve_codes, status_exclusion_warning
 from .taxonomy import load_taxonomy
 from .validate import validate_output
 
@@ -141,6 +141,10 @@ def run(config_path: str, data_dir: str, out_path: str, *, use_llm: bool = True,
     link = df["matched_to"] if "matched_to" in df.columns else None
     df["item_key"] = dedupe_items(df, cfg, df["supplier_key"], memory, link=link)
     report["rules"] = rule_stats
+    sw = status_exclusion_warning(df, float((cfg.get("status") or {}).get("warn_above_share", 0.30)))
+    report["warnings"] = [sw] if sw else []
+    if sw:
+        log.warning(sw)
     if match_stats:
         sec = df["source"] == cfg["cross_source"]["secondary"]
         match_stats["secondary_only_included_spend"] = round(float(df.loc[sec & (df["include"] == 1), "spend"].sum()), 2)

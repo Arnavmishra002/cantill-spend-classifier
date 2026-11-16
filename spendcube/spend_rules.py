@@ -192,3 +192,20 @@ def apply_rules(df: pd.DataFrame, cfg: dict) -> dict:
     apply_non_procurement(df, cfg, stats)
     apply_within_source_duplicates(df, cfg, stats)
     return stats
+
+
+def status_exclusion_warning(df: pd.DataFrame, limit: float = 0.30) -> str | None:
+    """A loud warning when status rules exclude more than `limit` of lines or of spend: an
+    unrecognised status vocabulary can silently exclude a whole company."""
+    if not len(df) or "exclusion_reason" not in df:
+        return None
+    st = df["exclusion_reason"].isin(["CANCELLED", "NOT_APPROVED"]) & \
+        df["exclusion_rule"].astype(str).str.startswith("status")
+    tot = float(df["spend_rc"].abs().sum()) if "spend_rc" in df else 0.0
+    share_n = float(st.mean())
+    share_s = float(df.loc[st, "spend_rc"].abs().sum()) / tot if tot > 0 else 0.0
+    if max(share_n, share_s) <= limit:
+        return None
+    vals = df.loc[st, "status"].astype(str).value_counts().head(8).to_dict() if "status" in df else {}
+    return (f"status rules exclude {share_n:.0%} of lines and {share_s:.0%} of spend. Check status_map "
+            f"before using this output. Excluded status values: {vals}")

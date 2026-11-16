@@ -449,7 +449,8 @@ class LLMClassifier:
                     if "authentication" in msg.lower() or "401" in msg or "permission" in msg.lower():
                         prov.disabled = True     # no point sending more requests this run
                     log.warning("%s batch failed: %s", prov.model, msg[:200])
-        if self.budget.exhausted() or self.stats["skipped_for_cap"]:
+        if (self.budget.exhausted() or self.stats["skipped_for_cap"]) and not self.stats.get("cap_warned"):
+            self.stats["cap_warned"] = True      # once per run, not once per batch group
             log.warning("LLM cost cap reached ($%.2f of $%.2f); remaining units use offline layers",
                         self.budget.spent, self.budget.cap_usd)
         return out
