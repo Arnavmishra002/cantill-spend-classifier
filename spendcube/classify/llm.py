@@ -128,8 +128,26 @@ class Budget:
             self.tokens_out += tout
             self.tokens_cache_read += tcache
 
+    reserved: float = 0.0
+
     def exhausted(self) -> bool:
         return self.spent >= self.cap_usd
+
+    def estimate(self) -> float:
+        """Expected cost of the next call: the running average, or a cautious first guess."""
+        with self.lock:
+            return (self.spent / self.calls) if self.calls else 0.10
+
+    def try_reserve(self, est: float) -> bool:
+        with self.lock:
+            if self.spent + self.reserved + est > self.cap_usd:
+                return False
+            self.reserved += est
+            return True
+
+    def release(self, est: float):
+        with self.lock:
+            self.reserved = max(0.0, self.reserved - est)
 
 
 class AnthropicProvider:
@@ -209,7 +227,8 @@ def check_llm_health(cfg: dict) -> dict[str, str]:
     lcfg = llm_settings(cfg)
     prices = {**DEFAULT_PRICES, **{k: tuple(v) for k, v in (lcfg.get("prices") or {}).items()}}
     out: dict[str, str] = {}
-    for spec in [lcfg.get("primary"), lcfg.get("second"), lcfg.get("judge"), *(lcfg.get("fallbacks") or [])]:
+    for spec in [lcfg.get("primary"), lcfg.get("tail"), lcfg.get("second"), lcfg.get("judge"),
+                 *(lcfg.get("fallbacks") or [])]:
         p = make_provider(spec, prices)
         if p and p.model not in out:
             out[p.model] = p.health()
@@ -228,6 +247,12 @@ def tree_block(tax, leaf_ids) -> tuple[str, str]:
         else:
             lines.append(f"{nid}: {path}")
     return "\n".join(lines), (" [description]" if has_desc else "")
+
+
+def outline_block(tax, max_lines: int = 400) -> str:
+    """Upper levels of a big tree (every node above the leaves), for orientation only."""
+    rows = [" > ".join(n.path) for n in tax.nodes.values() if n.children]
+    return "\n".join(rows[:max_lines])
 
 
 def result_schema(leaf_ids: list[str]) -> dict:
@@ -266,39 +291,39 @@ class LLMClassifier:
         self.primary = make_provider(lcfg.get("primary"), prices)
         self.second = make_provider(lcfg.get("second"), prices)
         self.judge = make_provider(lcfg.get("judge"), prices)
+        self.tail = make_provider(lcfg.get("tail"), prices)        # cheaper model for the low-spend tail
         self.fallbacks = [make_provider(s, prices) for s in (lcfg.get("fallbacks") or [])]
         self.batch_size = int(lcfg.get("batch_size", 25))
-        self.concurrency = int(lcfg.get("concurrency", 6))
+        self.concurrency = int(lcfg.get("concurrency", 10))
         self.budget = Budget(float(lcfg.get("cost_cap_usd", 15.0)))
         self.cache = ResultCache(Path(cache_dir) / "llm_results.jsonl")
         self.leaf_ids = list(tax.leaves)
-        tree, desc_note = tree_block(tax, self.leaf_ids)
         ctx = cfg.get("classification", {}).get("company_context") or "not given"
-        self.system = SYSTEM_TEMPLATE.format(context=ctx, tree=tree, desc_note=desc_note)
+        # Big trees: no full tree in the prompt; each batch gets the union of its lines'
+        # retrieval shortlists instead (see classify()).
+        self.shortlist_mode = len(self.leaf_ids) > int(lcfg.get("shortlist_above_leaves", 400))
+        if self.shortlist_mode:
+            tree = outline_block(tax)
+            self.system = SYSTEM_TEMPLATE.format(context=ctx, tree=tree, desc_note=" (outline only; each "
+                                                 "request lists the candidate leaves to choose from)")
+        else:
+            tree, desc_note = tree_block(tax, self.leaf_ids)
+            self.system = SYSTEM_TEMPLATE.format(context=ctx, tree=tree, desc_note=desc_note)
         self.schema = result_schema(self.leaf_ids)
+        self.valid = set(self.leaf_ids)
         self.tax_hash = _sha(self.system)[:16]
-        self.stats = {"cache_hits": 0, "classified": 0, "failed_batches": 0}
+        self.stats = {"cache_hits": 0, "classified": 0, "failed_batches": 0, "refused_batches": 0,
+                      "skipped_for_cap": 0}
         self.health_report: dict[str, str] = {}
 
     # ------------------------------------------------------------------ utils
     def providers(self) -> list[AnthropicProvider]:
         seen, out = set(), []
-        for p in [self.primary, self.second, self.judge, *self.fallbacks]:
+        for p in [self.primary, self.second, self.judge, self.tail, *self.fallbacks]:
             if p and id(p) not in seen:
                 seen.add(id(p))
                 out.append(p)
         return out
-
-    def check_health(self) -> dict[str, str]:
-        """Ask every distinct model once. Failing models are switched off for the run."""
-        by_model: dict[str, str] = {}
-        for p in self.providers():
-            if p.model not in by_model:
-                by_model[p.model] = p.health()
-            if by_model[p.model] != "ok":
-                p.disabled = True
-        self.health_report = by_model
-        return by_model
 
     def apply_health(self, health: dict[str, str]):
         """Switch off models that failed the run's start-up health check."""
@@ -308,21 +333,60 @@ class LLMClassifier:
                 p.disabled = True
 
     def enabled(self) -> bool:
-        provs = [p for p in [self.primary, *self.fallbacks] if p]
+        provs = [p for p in [self.primary, self.tail, *self.fallbacks] if p]
         return bool(self.cfg.get("enabled", True)) and any(p.available() for p in provs)
 
-    def _key(self, prov, payload: dict, role: str, group: dict | None = None) -> str:
+    def _key(self, prov, it: dict, role: str) -> str:
         return _sha(f"{PROMPT_VERSION}|{role}|{prov.model}|{self.tax_hash}|"
-                    f"{json.dumps(payload, sort_keys=True, ensure_ascii=False)}|"
-                    f"{json.dumps(group or {}, sort_keys=True, ensure_ascii=False)}")
+                    f"{json.dumps(it['payload'], sort_keys=True, ensure_ascii=False)}|"
+                    f"{json.dumps(it.get('group_payload') or {}, sort_keys=True, ensure_ascii=False)}|"
+                    f"{','.join(it.get('cands') or [])}")
+
+    def _request(self, prov, batch, instruction):
+        """Build and send one request. Returns {index: result}."""
+        groups, gid, lines = [], {}, []
+        for j, (it, _) in enumerate(batch):
+            g = it.get("group")
+            rec = {"i": j}
+            if g and it.get("group_payload") is not None:
+                if g not in gid:
+                    gid[g] = f"S{len(gid) + 1}"
+                    groups.append({"s": gid[g], **it["group_payload"]})
+                rec["s"] = gid[g]
+            rec.update(it["payload"])
+            lines.append(rec)
+        head = instruction or ("Classify each line. Lines refer to their supplier `s` (context below). "
+                               "Return one result per line `i`.")
+        parts = [head]
+        schema, valid = self.schema, self.valid
+        if self.shortlist_mode:
+            cand = list(dict.fromkeys(c for it, _ in batch for c in (it.get("cands") or [])))
+            cand = cand[: int(self.cfg.get("shortlist_batch_cap", 300))] or self.leaf_ids[:300]
+            schema, valid = result_schema(cand), set(cand)
+            parts += ["CANDIDATE CATEGORIES (choose only from these):"] + \
+                     [f"{c}: {self.tax.display_path(c)}" for c in cand]
+        if groups:
+            parts += ["SUPPLIERS:"] + [json.dumps(x, ensure_ascii=False) for x in groups] + ["LINES:"]
+        parts += [json.dumps(x, ensure_ascii=False) for x in lines]
+        res, usd, tin, tout, tcache = prov.classify(self.system, "\n".join(parts), schema)
+        self.budget.add(usd, tin, tout, tcache)
+        got = {}
+        for r in res.get("results", []):
+            j = r.get("i")
+            if isinstance(j, int) and 0 <= j < len(batch) and r.get("node") in valid:
+                conf = float(r.get("confidence", 0.5))
+                got[j] = {"node": r["node"], "confidence": max(0.0, min(1.0, conf)), "model": prov.model}
+        return got
 
     def _run_batches(self, prov, items: list[dict], role: str, instruction: str | None = None) -> dict[str, dict]:
-        """items: [{'uid', 'payload', 'group'?, 'group_payload'?}]. Returns uid -> {node, confidence}."""
+        """items: [{'uid', 'payload', 'group'?, 'group_payload'?, 'spend'?, 'cands'?}].
+        Returns uid -> {node, confidence}. Batches run in descending spend order, so a cost
+        cap only ever drops the low-spend tail."""
         out: dict[str, dict] = {}
         todo = []
         same_key: dict[str, list[str]] = {}
         for it in items:
-            k = self._key(prov, it["payload"], role, it.get("group_payload"))
+            k = self._key(prov, it, role)
             hit = self.cache.get(k)
             if hit is not None:
                 out[it["uid"]] = hit
@@ -334,39 +398,40 @@ class LLMClassifier:
                 todo.append((it, k))
         if not todo or not prov.available():
             return out
-        # lines of the same supplier travel together so supplier context is sent once
-        todo.sort(key=lambda x: (x[0].get("group") or "", x[0]["uid"]))
+        # one supplier's lines travel together; suppliers ordered by their largest unit's spend
+        gmax: dict[str, float] = {}
+        for it, _ in todo:
+            g = it.get("group") or it["uid"]
+            gmax[g] = max(gmax.get(g, 0.0), float(it.get("spend", 0.0)))
+        todo.sort(key=lambda x: (-gmax[x[0].get("group") or x[0]["uid"]], x[0].get("group") or "",
+                                 -float(x[0].get("spend", 0.0)), x[0]["uid"]))
         batches = [todo[i:i + self.batch_size] for i in range(0, len(todo), self.batch_size)]
 
         def run(batch):
-            if self.budget.exhausted() or prov.disabled:
+            if prov.disabled:
                 return []
-            groups, gid, lines = [], {}, []
-            for j, (it, _) in enumerate(batch):
-                g = it.get("group")
-                rec = {"i": j}
-                if g and it.get("group_payload") is not None:
-                    if g not in gid:
-                        gid[g] = f"S{len(gid) + 1}"
-                        groups.append({"s": gid[g], **it["group_payload"]})
-                    rec["s"] = gid[g]
-                rec.update(it["payload"])
-                lines.append(rec)
-            head = instruction or ("Classify each line. Lines refer to their supplier `s` (context below). "
-                                   "Return one result per line `i`.")
-            parts = [head]
-            if groups:
-                parts += ["SUPPLIERS:"] + [json.dumps(x, ensure_ascii=False) for x in groups] + ["LINES:"]
-            parts += [json.dumps(x, ensure_ascii=False) for x in lines]
-            res, usd, tin, tout, tcache = prov.classify(self.system, "\n".join(parts), self.schema)
-            self.budget.add(usd, tin, tout, tcache)
-            got = {}
-            valid = schema_enum(self.schema)
-            for r in res.get("results", []):
-                j = r.get("i")
-                if isinstance(j, int) and 0 <= j < len(batch) and r.get("node") in valid:
-                    conf = float(r.get("confidence", 0.5))
-                    got[j] = {"node": r["node"], "confidence": max(0.0, min(1.0, conf)), "model": prov.model}
+            est = self.budget.estimate()
+            if not self.budget.try_reserve(est):        # never start a call that could pass the cap
+                self.stats["skipped_for_cap"] += 1
+                return []
+            try:
+                try:
+                    got = self._request(prov, batch, instruction)
+                except RuntimeError as e:
+                    if "refused" not in str(e) or len(batch) <= 1:
+                        raise
+                    # a refusal is usually caused by one line: retry in pieces of 5
+                    self.stats["refused_batches"] += 1
+                    got = {}
+                    for s0 in range(0, len(batch), 5):
+                        piece = batch[s0:s0 + 5]
+                        try:
+                            sub = self._request(prov, piece, instruction)
+                        except RuntimeError:
+                            continue            # still refused: these lines go to the fallback model
+                        got.update({s0 + j: v for j, v in sub.items()})
+            finally:
+                self.budget.release(est)
             done = [(batch[j][1], batch[j][0]["uid"], v) for j, v in got.items()]
             self.cache.put_many([(k, v) for k, _, v in done])
             return done
@@ -384,15 +449,22 @@ class LLMClassifier:
                     if "authentication" in msg.lower() or "401" in msg or "permission" in msg.lower():
                         prov.disabled = True     # no point sending more requests this run
                     log.warning("%s batch failed: %s", prov.model, msg[:200])
-        if self.budget.exhausted():
-            log.warning("LLM cost cap reached ($%.2f); remaining units use offline layers", self.budget.spent)
+        if self.budget.exhausted() or self.stats["skipped_for_cap"]:
+            log.warning("LLM cost cap reached ($%.2f of $%.2f); remaining units use offline layers",
+                        self.budget.spent, self.budget.cap_usd)
         return out
 
-    def _chain(self, items: list[dict], role: str, instruction: str | None = None) -> dict[str, dict]:
-        """Primary model, then fallbacks; each retries lines it omitted once."""
+    def _chain(self, items: list[dict], role: str, instruction: str | None = None,
+               first=None) -> dict[str, dict]:
+        """`first` model (default primary), then fallbacks; each retries omitted lines once."""
         res: dict[str, dict] = {}
         remaining = items
-        for prov in [p for p in [self.primary, *self.fallbacks] if p]:
+        chain = [p for p in [first or self.primary, *self.fallbacks, self.primary] if p]
+        seen = set()
+        for prov in chain:
+            if id(prov) in seen:
+                continue
+            seen.add(id(prov))
             for _ in range(2):
                 if not remaining or not prov.available():
                     break
@@ -412,9 +484,26 @@ class LLMClassifier:
 
     def classify_units(self, items: list[dict], vote_threshold: float = 0.7,
                        priority: list[str] | None = None) -> dict[str, dict]:
-        """items: [{'uid', 'payload', 'group', 'group_payload'}].
-        priority: uids that always get a second opinion (the highest-spend units)."""
-        res = self._chain(items, "primary")
+        """items: [{'uid', 'payload', 'group', 'group_payload', 'spend', 'cands'?}].
+        The units holding the top `primary_spend_share` of spend go to the primary model,
+        the tail to the cheaper `tail` model. priority: uids that always get a second opinion."""
+        share = float(self.cfg.get("primary_spend_share", 1.0))
+        head, tail = items, []
+        if self.tail and share < 1.0 and items:
+            order = sorted(items, key=lambda it: -float(it.get("spend", 0.0)))
+            tot = sum(max(float(it.get("spend", 0.0)), 0.0) for it in order) or 1.0
+            acc, head = 0.0, []
+            for it in order:
+                if acc / tot < share:
+                    head.append(it)
+                    acc += max(float(it.get("spend", 0.0)), 0.0)
+                else:
+                    tail.append(it)
+        res = self._chain(head, "primary")
+        if tail:
+            res.update(self._chain(tail, "primary", first=self.tail))
+        self.stats["units_primary_model"] = len(head)
+        self.stats["units_tail_model"] = len(tail)
         if self.second and self.second.available() and res:
             pr = set(priority or [])
             unsure = [it for it in items if it["uid"] in res and
@@ -442,7 +531,8 @@ class LLMClassifier:
                     p = dict(it["payload"])
                     p["candidates"] = [f"{a['node']} {self.tax.nodes[a['node']].label}",
                                        f"{a['alt']['node']} {self.tax.nodes[a['alt']['node']].label}"]
-                    jitems.append({**it, "payload": p})
+                    cands = list(dict.fromkeys([a["node"], a["alt"]["node"], *(it.get("cands") or [])]))
+                    jitems.append({**it, "payload": p, "cands": cands})
                 instr = ("Two analysts disagreed on each line below; their answers are in `candidates`. "
                          "Lines refer to their supplier `s`. Return one result per line `i`.")
                 judged = self._run_batches(self.judge, jitems, "judge", instr)
@@ -457,6 +547,8 @@ class LLMClassifier:
                 "tokens_in": self.budget.tokens_in, "tokens_out": self.budget.tokens_out,
                 "tokens_cache_read": self.budget.tokens_cache_read,
                 "primary": self.primary.model if self.primary else None,
+                "tail": self.tail.model if self.tail else None,
                 "second": self.second.model if self.second else None,
                 "judge": self.judge.model if self.judge else None,
+                "shortlist_mode": self.shortlist_mode,
                 "health": self.health_report}

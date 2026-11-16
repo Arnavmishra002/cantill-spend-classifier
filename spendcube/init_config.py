@@ -42,8 +42,11 @@ HEADER_HINTS = {
                   r"line[\s_]*id", r"(record|row|line)[\s_]*(no|number|#)$"],
     "invoice_number": [r"inv(oice)?[\s_]*(no|num|number|#|id|ref)", r"^document[\s_]*(no|number)$", r"bill[\s_]*no"],
     "invoice_line": [r"inv(oice)?[\s_]*line", r"^line[\s_]*(no|num|number)$", r"^item[\s_]*no$"],
-    "date": [r"inv(oice)?[\s_]*date", r"doc(ument)?[\s_]*date", r"bill[\s_]*date", r"^date$", r"txn[\s_]*date", r"transaction[\s_]*date"],
-    "posting_date": [r"post(ing)?[\s_]*date", r"gl[\s_]*date", r"entry[\s_]*date", r"accounting[\s_]*date"],
+    "date": [r"inv(oice)?[\s_]*date", r"doc(ument)?[\s_]*date", r"bill[\s_]*date", r"purchase[\s_]*date",
+             r"order[\s_]*date", r"po[\s_]*date", r"^date$", r"txn[\s_]*date", r"transaction[\s_]*date",
+             r"receipt[\s_]*date"],
+    "posting_date": [r"post(ing)?[\s_]*date", r"gl[\s_]*date", r"entry[\s_]*date", r"accounting[\s_]*date",
+                     r"creat(ion|ed)[\s_]*(date|on)", r"approv(al|ed)[\s_]*date"],
     "supplier_name": [r"(supplier|vendor|creditor|payee|seller)[\s_]*(name)?$", r"(supplier|vendor)[\s_]*name", r"party[\s_]*name"],
     "supplier_id": [r"(supplier|vendor|creditor|payee)[\s_]*(id|code|no|nr|num|number|#|key|ref|account|acct)$",
                     r"(supplier|vendor|creditor)[\s_]*(id|code|no|number|#)\b", r"^vendor$"],
@@ -374,6 +377,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                (".csv", ".tsv", ".txt", ".xlsx", ".xls") and p.resolve() != tax_path.resolve()
                and not p.name.startswith("."))
     sources, notes, fx_table = [], [], None
+    window_years: list[tuple[int, int]] = []
     fx_sem_any = None
     consistency_groups: list[str] = []
     all_context_samples = []
@@ -422,6 +426,17 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             if fx_sem:
                 notes.append(f"{p.name}: `{roles['fx_rate']}` looks like {fx_sem} (CHECK fx.rate_semantics)")
         cols = {f: c for f, c in roles.items() if f != "record_id"}
+        # join every descriptive text column (Item Name, Item Description, Short Text, ...)
+        if "description" in roles:
+            desc_rx = r"(?i)(item|material|product|service|line)[\s_]*(name|desc|description|text)|short[\s_]*text|" \
+                      r"long[\s_]*text|^description$|narration|particulars"
+            more = [c for c in df.columns if c != roles["description"] and c not in roles.values()
+                    and re.search(desc_rx, c) and prof[c]["alpha_rate"] > 0.5 and prof[c]["avg_len"] > 4]
+            if more:
+                first = sorted([roles["description"]] + more,
+                               key=lambda c: (0 if re.search(r"(?i)name", c) else 1, list(df.columns).index(c)))
+                cols["description"] = first
+                notes.append(f"{p.name}: description joins {first} (CHECK)")
         if extra["context"]:
             cols["context"] = extra["context"]
         groups = [c for c in df.columns if re.search(r"(?i)contract|agreement", c) and c not in roles.values()
@@ -439,6 +454,15 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             src["amount_type"] = "gross"
             src["tax_rate_default"] = 0.0
             notes.append(f"{p.name}: amount `{amt_col}` looks gross -> tax removed (CHECK)")
+        # plausible year window from the data itself (1st to 99th percentile, plus one year)
+        yrs = []
+        for f in ("date", "posting_date"):
+            if f in roles:
+                d = parse_date_series(df[roles[f]].astype(str).head(20000))
+                yrs += list(d.dt.year.dropna().astype(int))
+        if yrs:
+            ys = pd.Series(yrs)
+            window_years.append((int(ys.quantile(0.01)) - 1, int(ys.quantile(0.99)) + 1))
         # day-first or month-first, decided from the values of the date columns
         votes = {guess_dayfirst(df[roles[f]]) for f in ("date", "posting_date") if f in roles} - {None}
         if len(votes) == 1:
@@ -500,7 +524,9 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         "non_procurement": [{k: v for k, v in r.items() if not k.startswith("_")} for r in np_rules],
         "duplicates": {"within_source": True, "fuzzy": True},
         "cross_source": {"enabled": False},
-        "dates": {"dayfirst": True, "valid_window_years": [2015, 2030]},
+        "dates": {"dayfirst": next((s_["dayfirst"] for s_ in sources if "dayfirst" in s_), True),
+                  "valid_window_years": [min(w[0] for w in window_years), max(w[1] for w in window_years)]
+                  if window_years else [2000, 2035]},
         "dedupe": {"supplier": {"use_supplier_id": True, "fuzzy_threshold": 92},
                    "item": {"use_item_code": True, "fuzzy_threshold": 95}},
         "classification": {
@@ -508,7 +534,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             "consistency": {"group_fields": consistency_groups, "strong": 0.8, "weak": 0.7, "share": 0.7},
             "labels": None,
             # Claude only, same keys as the defaults in spendcube/config.py
-            "llm": copy.deepcopy(DEFAULTS["classification"]["llm"]),
+            "llm": {**copy.deepcopy(DEFAULTS["classification"]["llm"]), "cost_cap_usd": 60.0},
             "embeddings": {"provider": "lsa", "dim": 256},
         },
         "output": {"template": "output_template.csv"},

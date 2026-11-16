@@ -78,9 +78,13 @@ DEFAULTS: dict[str, Any] = {
             "primary": {"vendor": "anthropic", "model": "claude-opus-5-5", "effort": "low"},
             "second": {"vendor": "anthropic", "model": "claude-sonnet-5-5", "effort": "low"},
             "judge": {"vendor": "anthropic", "model": "claude-opus-5-5", "effort": "low"},
+            "tail": {"vendor": "anthropic", "model": "claude-sonnet-5-5", "effort": "low"},
             "fallbacks": [{"vendor": "anthropic", "model": "claude-sonnet-5-5", "effort": "low"}],
+            "primary_spend_share": 0.95,       # units holding the top 95% of spend go to the primary model
+            "shortlist_above_leaves": 400,     # bigger trees: per-batch candidate shortlist, not the full tree
+            "shortlist_size": 30,
             "batch_size": 25,
-            "concurrency": 6,
+            "concurrency": 10,
             "low_confidence_threshold": 0.5,   # labelled runs: LLM only below this supervised confidence
             "vote_threshold": 0.7,             # second opinion below this primary confidence
             "second_max_units": 1500,

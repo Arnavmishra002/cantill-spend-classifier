@@ -293,9 +293,11 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                                         "from": "labels"}
             if lcfg.get("supplier_profiles", True):
                 need = [i for i in cand if units.at[i, "supplier_key"] not in profiles]
-                profiles.update(_profile_suppliers(llm, units, np.array(need, dtype=int), leaf_ids, tax))
+                profiles.update(_profile_suppliers(llm, units, np.array(need, dtype=int), leaf_ids, tax,
+                                                   sim if llm.shortlist_mode else None))
             stats["supplier_profiles"] = len(profiles)
             items = []
+            k = int(lcfg.get("shortlist_size", 30))
             for i in cand:
                 r = units.iloc[i]
                 payload = {"line": _llm_line(r)}
@@ -316,7 +318,11 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                 sl = sup_lines.get(sk, [])[:5]
                 if sl:
                     gp["other_lines"] = sl
-                items.append({"uid": r["unit_id"], "payload": payload, "group": sk, "group_payload": gp})
+                it = {"uid": r["unit_id"], "payload": payload, "group": sk, "group_payload": gp,
+                      "spend": float(units["spend"].values[i])}
+                if llm.shortlist_mode:
+                    it["cands"] = _shortlist(i, sim, leaf_ids, tax, profiles.get(sk), p_sup, k)
+                items.append(it)
             log.info("LLM: %d units to classify", len(items))
             # spend-weighted scoring: the units holding the top share of spend always get
             # a second, independent opinion (plus every unit the primary is unsure about)
@@ -425,7 +431,21 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
     return stats
 
 
-def _profile_suppliers(llm, units: pd.DataFrame, cand, leaf_ids, tax) -> dict:
+def _shortlist(i, sim, leaf_ids, tax, profile, p_sup, k=30) -> list[str]:
+    """Candidate leaves for one unit in a big tree: top-k by text similarity to the tree
+    paths, the supplier's profile leaf, the supervised model's top picks, and the general
+    leaf of each candidate's branch."""
+    top = [leaf_ids[j] for j in np.argsort(-sim[i])[:k]]
+    extra = []
+    if profile:
+        extra.append(profile["node"])
+    if p_sup is not None:
+        extra += [leaf_ids[j] for j in np.argsort(-p_sup[i])[:3]]
+    gen = [g for g in (tax.general_sibling(c) for c in top[:10]) if g]
+    return list(dict.fromkeys(extra + top + gen))
+
+
+def _profile_suppliers(llm, units: pd.DataFrame, cand, leaf_ids, tax, sim=None) -> dict:
     """One LLM decision per supplier from its biggest lines (cached like everything else)."""
     cur = units[units["current"]]
     if len(cand) == 0:
@@ -445,8 +465,12 @@ def _profile_suppliers(llm, units: pd.DataFrame, cand, leaf_ids, tax) -> dict:
             extra = f" [{r.gl_description}]" if r.gl_description else ""
             top.append(f"{d}{extra} x{r.n_lines} ({100 * r.spend / tot:.0f}%)")
         name = g["supplier_name"].iloc[0] or "(no name, id only)"
-        items.append({"uid": sk, "payload": {"supplier": name, "n_lines": int(g["n_lines"].sum()),
-                                             "top_lines": top}})
+        it = {"uid": sk, "payload": {"supplier": name, "n_lines": int(g["n_lines"].sum()), "top_lines": top},
+              "spend": float(g["spend"].sum())}
+        if sim is not None:   # big tree: candidates from the supplier's biggest lines
+            pos = [units.index.get_loc(x) for x in g.head(8).index]
+            it["cands"] = list(dict.fromkeys(leaf_ids[j] for p_ in pos for j in np.argsort(-sim[p_])[:12]))[:60]
+        items.append(it)
     if not items:
         return {}
     log.info("LLM: profiling %d suppliers", len(items))

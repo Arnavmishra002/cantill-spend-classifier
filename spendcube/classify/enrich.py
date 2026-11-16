@@ -24,6 +24,8 @@ def add_scope_notes(tax, units: pd.DataFrame, cfg: dict, cache_dir: Path) -> int
     if any(tax.nodes[n].description for n in leaves):
         return 0  # the client's own descriptions win
     lcfg = cfg.get("classification", {}).get("llm", {})
+    if len(leaves) > int(lcfg.get("shortlist_above_leaves", 400)):
+        return 0   # big tree: shortlist mode, notes would cost more than they add
     spec = lcfg.get("notes_model") or lcfg.get("judge") or lcfg.get("primary") or {}
     if spec.get("vendor") != "anthropic" or not os.environ.get("ANTHROPIC_API_KEY"):
         return 0

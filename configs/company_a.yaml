@@ -117,7 +117,7 @@ classification:
     judge: {vendor: anthropic, model: claude-opus-5-5, effort: low}      # decides disagreements
     fallbacks: [{vendor: anthropic, model: claude-sonnet-5-5, effort: low}]
     batch_size: 25
-    concurrency: 6
+    concurrency: 10
     low_confidence_threshold: 0.3   # measured: LLM beats supervised only below 0.3 on A2 simulation
     vote_threshold: 0.7
     second_max_units: 1500

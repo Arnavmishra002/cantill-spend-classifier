@@ -105,3 +105,23 @@ def test_supplier_id_synonyms_dayfirst_and_unique_lists(tmp_path):
         assert len(src["file"]) == len(set(src["file"]))
         inc = src["status_map"]["include"]
         assert len(inc) == len(set(inc)) and "paid" in inc
+
+
+def test_real_style_file_joins_text_maps_dates_and_window(tmp_path):
+    n = 60
+    pd.DataFrame({
+        "Line ID": [f"C{i}" for i in range(n)], "Vendor Name": ["Acme Corp", "Beta LLC", "Gamma Inc"] * 20,
+        "Item Name": ["Laptop computer", "Toner cartridge", "Office chair"] * 20,
+        "Item Description": ["14 inch, 16GB", "black, high yield", "ergonomic mesh"] * 20,
+        "Creation Date": [f"0{(i % 9) + 1}/2{(i % 8) + 1}/2013" for i in range(n)],
+        "Purchase Date": [f"0{(i % 9) + 1}/1{(i % 9) + 1}/2013" for i in range(n)],
+        "Total Price": ["$1,200.00"] * n,
+    }).to_csv(tmp_path / "po.csv", index=False)
+    pd.DataFrame({"Level 1": ["IT", "Office"], "Level 2": ["Hardware", "Furniture"]}).to_csv(tmp_path / "t.csv", index=False)
+    cfg = yaml.safe_load(draft_config(str(tmp_path), "t.csv", str(tmp_path / "c.yaml"), use_llm=False).read_text())
+    src = cfg["sources"][0]
+    assert src["columns"]["description"] == ["Item Name", "Item Description"]
+    assert src["columns"]["date"] == "Purchase Date" and src["columns"]["posting_date"] == "Creation Date"
+    assert src["dayfirst"] is False and cfg["dates"]["dayfirst"] is False
+    lo, hi = cfg["dates"]["valid_window_years"]
+    assert lo <= 2012 and 2014 <= hi <= 2015
