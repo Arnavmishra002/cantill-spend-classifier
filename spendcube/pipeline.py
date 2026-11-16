@@ -148,11 +148,13 @@ def run(config_path: str, data_dir: str, out_path: str, *, use_llm: bool = True,
     if len(sub):
         cstats = clf.classify(sub, cfg, tax, data_dir, cache, labels=labels, use_llm=use_llm,
                               train_df=train_df, llm_health=health.get("models"))
-        for c in ("node", "confidence", "class_source", "unit_id"):
-            df[c] = sub[c].reindex(df.index)
+        for c in ("node", "confidence", "class_source", "unit_id", "calib_p1", "calib_margin",
+                  "calib_sim1", "calib_sim2", "calib_weak"):
+            df[c] = sub[c].reindex(df.index) if c in sub else None
     else:
         cstats = {"llm": {}, "class_source_lines": {}}
-        for c in ("node", "confidence", "class_source", "unit_id"):
+        for c in ("node", "confidence", "class_source", "unit_id", "calib_p1", "calib_margin",
+                  "calib_sim1", "calib_sim2", "calib_weak"):
             df[c] = None
     report["classification"] = cstats
 

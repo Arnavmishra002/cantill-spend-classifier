@@ -25,6 +25,7 @@ from ..ingest import read_table
 from ..paths import resolve_file
 from ..taxonomy import Taxonomy
 from ..textnorm import clean_text
+from .calibration import OfflineCalibrator, family
 from .llm import LLMClassifier, llm_settings
 from .units import build_units
 from .vectors import DenseEncoder, KNNIndex, SparseVectorizer
@@ -353,12 +354,30 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
 
     # ---- layer 4: offline zero-shot for whatever is still unclassified
     rest = source == ""
+    calib_p1 = np.full(U, np.nan)
+    calib_margin = np.full(U, np.nan)
     if rest.any():
         probs[rest] = p_ret[rest]
         conf[rest] = p_ret[rest].max(1) * 0.6
         source[rest] = "retrieval"
         # propagate supplier / account mix to weak units
         _propagate(units, probs, conf, source, rest & units["weak"].values)
+        top2 = np.sort(probs[rest], axis=1)[:, -2:]
+        calib_p1[rest] = top2[:, 1]
+        calib_margin[rest] = top2[:, 1] - top2[:, 0]
+    srt = np.sort(sim, axis=1)
+    units["calib_p1"] = calib_p1
+    units["calib_margin"] = calib_margin
+    units["calib_sim1"] = srt[:, -1]
+    units["calib_sim2"] = srt[:, -2] if srt.shape[1] > 1 else 0.0
+    if rest.any():
+        # calibrated confidence: probability that the chosen leaf is right
+        cal = OfflineCalibrator()
+        fams = np.array([family(x) for x in source])
+        for fam, col_ in (("retrieval", "calib_sim1"), ("propagated", "calib_p1")):
+            m = rest & (fams == fam)
+            if m.any():
+                conf[m] = cal.predict(fam, units[col_].values[m], conf[m])
 
     node_idx = probs.argmax(1)
     units["node"] = [leaf_ids[j] for j in node_idx]
@@ -370,6 +389,11 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
     out_df["node"] = cur["unit_id"].map(m["node"]).values
     out_df["confidence"] = cur["unit_id"].map(m["confidence"]).values
     out_df["class_source"] = cur["unit_id"].map(m["class_source"]).values
+    out_df["calib_p1"] = cur["unit_id"].map(m["calib_p1"]).values
+    out_df["calib_margin"] = cur["unit_id"].map(m["calib_margin"]).values
+    out_df["calib_sim1"] = cur["unit_id"].map(m["calib_sim1"]).values
+    out_df["calib_sim2"] = cur["unit_id"].map(m["calib_sim2"]).values
+    out_df["calib_weak"] = cur["unit_id"].map(m["weak"]).values
     stats["consistency"] = _consistency_pass(out_df, ccfg)
     stats["class_source_lines"] = out_df["class_source"].value_counts().to_dict()
     stats["_units"] = units[units["current"]]
@@ -440,7 +464,10 @@ def _consistency_pass(df: pd.DataFrame, ccfg: dict) -> dict:
         sh = g.map(dist["share"])
         ch = weak & (sh >= share_min) & (new != df["node"])
         df.loc[ch, "node"] = new[ch]
-        df.loc[ch, "confidence"] = (sh[ch] * 0.75).round(3)
+        cal = OfflineCalibrator()
+        df.loc[ch, "calib_p1"] = sh[ch]
+        df.loc[ch, "calib_margin"] = 2 * sh[ch] - 1
+        df.loc[ch, "confidence"] = np.round(cal.predict("group", sh[ch], sh[ch] * 0.75), 3)
         df.loc[ch, "class_source"] = df.loc[ch, "class_source"].astype(str) + "+group"
         stats[f] = int(ch.sum())
     return stats

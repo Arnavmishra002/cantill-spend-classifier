@@ -64,7 +64,8 @@ def write_outputs(df: pd.DataFrame, out: pd.DataFrame, path: Path):
     out.to_csv(path, index=False, encoding="utf-8")
     audit_cols = [c for c in ["record_id", "source", "exclusion_rule", "matched_to", "match_pass",
                               "match_cluster", "flags", "currency_norm", "fx_rate_used", "fx_source",
-                              "amount_num", "net_amount", "spend_rc", "class_source", "node",
+                              "amount_num", "net_amount", "spend_rc", "class_source", "node", "confidence",
+                              "calib_p1", "calib_margin",
                               "unit_id", "supplier_name", "description"] if c in df.columns]
     audit = sidecar_path(path, "_audit.csv")
     df[audit_cols].to_csv(audit, index=False, encoding="utf-8")

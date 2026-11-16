@@ -80,3 +80,14 @@ def test_unknown_currency_uses_file_median(tmp_path):
     out = clean(df, _cfg(), tmp_path)
     assert out.loc[0, "fx_source"] == "line"
     assert out.loc[1, "fx_source"] == "file_median" and out.loc[1, "spend_rc"] == 50
+
+
+def test_offline_calibration_is_monotone_and_bounded():
+    from spendcube.classify.calibration import CALIB_FILE, OfflineCalibrator
+    assert CALIB_FILE.exists()
+    cal = OfflineCalibrator()
+    assert cal.available("retrieval")
+    s = np.linspace(0, 0.6, 50)
+    p = cal.predict("retrieval", s, np.zeros(50))
+    assert (np.diff(p) >= -1e-12).all() and p.min() >= 0.0 and p.max() <= 1.0
+    assert cal.predict("unknown-family", [0.3], [0.123])[0] == 0.123   # falls back

@@ -125,6 +125,15 @@ def main(argv=None):
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
         return 0
+    if argv and argv[0] == "calibrate":
+        p = argparse.ArgumentParser(prog="run.py calibrate", parents=[common])
+        p.add_argument("--pairs", nargs="+", required=True, help="config.yaml:data_dir pairs with labels")
+        a = p.parse_args(argv[1:])
+        _setup_logging(a.log_level)
+        from spendcube.calibrate import calibrate
+        res = calibrate([tuple(x.split(":", 1)) for x in a.pairs])
+        print(json.dumps(res, indent=2))
+        return 0
     if argv and argv[0] == "evaluate":
         p = argparse.ArgumentParser(prog="run.py evaluate", parents=[common])
         p.add_argument("--config", required=True)
