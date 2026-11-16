@@ -103,3 +103,19 @@ def test_llm_settings_merges_partial_block(tmp_path):
     cfg = load_config(_company(tmp_path, llm_block=True))
     s = llm_settings(cfg)
     assert s["primary"]["model"] == "claude-opus-5-5" and s["enabled"] is True
+
+
+def test_out_of_range_dates_do_not_crash(tmp_path):
+    cfgp = _company(tmp_path)
+    cfg = yaml.safe_load(cfgp.read_text())
+    df = pd.read_csv(tmp_path / "lines.csv", dtype=str)
+    df["when"] = ["2511-07-01", "01/02/1014", "2024-03-05"]
+    df["cur"] = ["EUR", "EUR", "USD"]
+    df.to_csv(tmp_path / "lines.csv", index=False)
+    cfg["sources"][0]["columns"].update({"date": "when", "currency": "cur"})
+    cfgp.write_text(yaml.safe_dump(cfg))
+    rep = run(str(cfgp), str(tmp_path), str(tmp_path / "o.csv"), use_llm=False, cache_dir=str(tmp_path / "cache"))
+    df2 = rep["_df"]
+    assert len(pd.read_csv(tmp_path / "o.csv")) == 3
+    assert "IMPOSSIBLE_DATE" in df2.loc[0, "flags"] and "IMPOSSIBLE_DATE" in df2.loc[1, "flags"]
+    assert (df2["spend_rc"] > 0).all()          # FX still found (nearest month)

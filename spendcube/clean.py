@@ -19,7 +19,7 @@ import pandas as pd
 
 from .ingest import read_table
 from .paths import resolve_file
-from .textnorm import clean_text, parse_date_series, parse_number_series
+from .textnorm import clean_text, parse_dates_with_flags, parse_number_series
 
 log = logging.getLogger(__name__)
 
@@ -137,13 +137,17 @@ def clean(df: pd.DataFrame, cfg: dict, data_dir: Path) -> pd.DataFrame:
 
     # ---- dates (each source may use its own format; parser handles mixed layouts)
     for f in ("date", "posting_date"):
-        df[f"{f}_parsed"] = pd.NaT
+        df[f"{f}_parsed"] = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
         if f in df.columns:
+            oor = pd.Series(False, index=df.index)
             for name, s in srcs.items():
                 m = df["source"] == name
                 if m.any():
-                    df.loc[m, f"{f}_parsed"] = parse_date_series(df.loc[m, f], s.get("dayfirst", dayfirst))
-            bad = (df[f].str.strip() != "") & df[f"{f}_parsed"].isna()
+                    d, o = parse_dates_with_flags(df.loc[m, f], s.get("dayfirst", dayfirst))
+                    df.loc[m, f"{f}_parsed"] = d
+                    oor.loc[m] = o
+            _add_flag(df, oor, f"IMPOSSIBLE_{f.upper()}")
+            bad = (df[f].str.strip() != "") & df[f"{f}_parsed"].isna() & ~oor
             _add_flag(df, bad, f"UNPARSED_{f.upper()}")
     lo, hi = dcfg.get("valid_window_years", [2000, 2035])
     for f in ("date_parsed", "posting_date_parsed"):

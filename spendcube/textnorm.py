@@ -151,8 +151,19 @@ def _mk(y, m, d):
         return None
 
 
+YEAR_LIMITS = (1900, 2200)   # outside this a value is a typo, never a real purchase date
+
+
 def parse_date(x, dayfirst: bool = True):
-    """Parse one date in any common layout. Returns datetime.date or None."""
+    """Parse one date in any common layout. Returns datetime.date or None.
+    Years outside YEAR_LIMITS return None (see parse_dates_with_flags for the flag)."""
+    d = _parse_date_any(x, dayfirst)
+    if d is not None and not (YEAR_LIMITS[0] <= d.year <= YEAR_LIMITS[1]):
+        return None
+    return d
+
+
+def _parse_date_any(x, dayfirst: bool = True):
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return None
     if isinstance(x, (datetime, pd.Timestamp)):
@@ -206,9 +217,21 @@ def parse_date(x, dayfirst: bool = True):
     return None
 
 
+def parse_dates_with_flags(s: pd.Series, dayfirst: bool = True) -> tuple[pd.Series, pd.Series]:
+    """Parse a column (vectorised over unique values). Returns (datetimes in ns, mask of
+    values that are dates but have an impossible year, such as 2511 or 1014)."""
+    raw = s.astype(str)
+    uniq = pd.unique(raw)
+    parsed, oor = {}, set()
+    for u in uniq:
+        d = _parse_date_any(u, dayfirst)
+        if d is not None and not (YEAR_LIMITS[0] <= d.year <= YEAR_LIMITS[1]):
+            oor.add(u)
+            d = None
+        parsed[u] = d
+    out = pd.to_datetime(raw.map(parsed), errors="coerce").astype("datetime64[ns]")
+    return out, raw.isin(oor)
+
+
 def parse_date_series(s: pd.Series, dayfirst: bool = True) -> pd.Series:
-    """Vectorised over unique values (dates repeat a lot)."""
-    uniq = pd.unique(s.astype(str))
-    mp = {u: parse_date(u, dayfirst) for u in uniq}
-    out = s.astype(str).map(mp)
-    return pd.to_datetime(out, errors="coerce")
+    return parse_dates_with_flags(s, dayfirst)[0]
