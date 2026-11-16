@@ -41,7 +41,7 @@ DEFAULTS: dict[str, Any] = {
         "CANCELLED": ["cancelled", "canceled", "void", "voided", "reversed", "deleted"],
         "NOT_APPROVED": ["rejected", "on hold", "hold", "submitted", "disputed", "pending",
                          "draft", "in review", "awaiting approval", "parked", "blocked"],
-        "unknown_status_outcome": "include",
+        "unknown_status_outcome": "NOT_APPROVED",   # brief: only approved or paid lines count
     },
     "non_procurement": [],
     "duplicates": {"within_source": True, "key": None},

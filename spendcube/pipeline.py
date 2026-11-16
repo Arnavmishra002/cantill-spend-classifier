@@ -141,6 +141,10 @@ def run(config_path: str, data_dir: str, out_path: str, *, use_llm: bool = True,
     link = df["matched_to"] if "matched_to" in df.columns else None
     df["item_key"] = dedupe_items(df, cfg, df["supplier_key"], memory, link=link)
     report["rules"] = rule_stats
+    if match_stats:
+        sec = df["source"] == cfg["cross_source"]["secondary"]
+        match_stats["secondary_only_included_spend"] = round(float(df.loc[sec & (df["include"] == 1), "spend"].sum()), 2)
+        match_stats["secondary_only_included_rows"] = int((sec & (df["include"] == 1)).sum())
     report["cross_source"] = match_stats
 
     inc = df["include"] == 1

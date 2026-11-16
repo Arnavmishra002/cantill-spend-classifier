@@ -53,7 +53,8 @@ def apply_status_rules(df: pd.DataFrame, cfg: dict, stats: dict):
         known |= inc
         unknown = st[(~st.isin(known)) & (st != "")]
         if len(unknown):
-            outcome = smap.get("unknown_status_outcome", "include")
+            stats[f"unmapped_status_{s['name']}"] = unknown.value_counts().head(20).to_dict()
+            outcome = smap.get("unknown_status_outcome", "NOT_APPROVED")
             log.warning("source %s: unknown status values %s -> %s",
                         s["name"], sorted(unknown.unique())[:10], outcome)
             if outcome in ("CANCELLED", "NOT_APPROVED"):

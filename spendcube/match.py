@@ -339,6 +339,8 @@ def match_sources(df: pd.DataFrame, cfg: dict, supplier_key: pd.Series | None = 
         "match_passes": passes,
         "rows_exported_twice": int(sum(1 for _, r in dup_rows if r == "exported_twice")),
         "primary_lines_claimed": int(len(taken)),
+        # spend found only in the second system: counted rows of unmatched clusters
+        "secondary_only_rows": int(sum(1 for c in clusters.groups if c not in matched)),
     })
     log.info("cross-source: %s", stats)
     return stats

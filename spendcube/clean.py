@@ -189,6 +189,10 @@ def clean(df: pd.DataFrame, cfg: dict, data_dir: Path) -> pd.DataFrame:
         m = (df["source"] == name) & (cur == "")
         if m.any():
             cur.loc[m] = (s.get("currency_default") or rc).upper()
+    # a rate other than 1 with no currency: the line is treated as reporting currency, but flagged
+    blank_cur = _col(df, "currency").str.strip() == ""
+    _add_flag(df, blank_cur & df["fx_rate_given"].notna() & ((df["fx_rate_given"] - 1.0).abs() > 1e-9),
+              "FX_RATE_WITHOUT_CURRENCY")
     df["currency_norm"] = cur
     fxcfg = cfg.get("fx") or {}
     sem = fxcfg.get("rate_semantics", "units_per_reporting")

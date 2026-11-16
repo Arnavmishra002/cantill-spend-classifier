@@ -58,6 +58,13 @@ def cmd_run(a):
     print(f"reconcile   : input {v['input_spend_rc']:,.2f} = included {v['included_spend']:,.2f} "
           f"+ excluded {v['excluded_spend']:,.2f}")
     print(f"suppliers   : {v['suppliers']}   items: {v['items']}")
+    xs = rep.get("cross_source") or {}
+    if xs.get("secondary_only_included_rows") is not None:
+        print(f"only in 2nd : {xs['secondary_only_included_rows']} rows, spend "
+              f"{xs['secondary_only_included_spend']:,.2f} (spend found in one system only)")
+    unmapped = {k: v for k, v in (rep.get("rules") or {}).items() if k.startswith("unmapped_status")}
+    for k, vals in unmapped.items():
+        print(f"WARNING     : status values not in the status map, treated as NOT_APPROVED: {vals}")
     print(f"class source: {rep['classification'].get('class_source_lines')}")
     if health.get("enabled") and not health.get("usable"):
         print("LLM         : NOT USED. " + health.get("message", "no provider answered"))
