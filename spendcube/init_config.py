@@ -25,7 +25,7 @@ import pandas as pd
 import yaml
 
 from .config import DEFAULTS
-from .ingest import read_table
+from .ingest import excel_sheets, read_table
 from .textnorm import clean_text, parse_date_series, parse_number_series
 
 log = logging.getLogger(__name__)
@@ -509,6 +509,31 @@ def _company_context(tax_paths: list[str], samples: list[str]) -> str | None:
         return None
 
 
+def _best_sheet(path: Path) -> tuple[str | None, str | None]:
+    """For a workbook with several sheets, the sheet that looks like transaction lines:
+    headers that read as amount, date, supplier and description, then the most rows.
+    Returns (sheet name or None for a single-sheet file, a CHECK note or None)."""
+    sheets = excel_sheets(path)
+    if len(sheets) < 2:
+        return None, None
+    best, best_score = None, None
+    for sh in sheets:
+        try:
+            d = read_table(path, sheet=sh)
+        except Exception:
+            continue
+        cols = [clean_text(c) for c in d.columns]
+        hits = sum(any(_score_header(c, f) > 0 for c in cols)
+                   for f in ("amount", "date", "supplier_name", "description", "record_id"))
+        score = (hits, len(d), len(cols))
+        if best_score is None or score > best_score:
+            best, best_score = sh, score
+    if best is None:
+        return None, None
+    return best, (f"workbook sheets {sheets}; reading sheet {best!r}, which looks like the transaction lines "
+                  f"(CHECK sheet)")
+
+
 def _taxonomy_block(path: Path) -> dict:
     t = read_table(path)
     cols = list(t.columns)
@@ -589,7 +614,10 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
     np_rules = list(GENERIC_NP_RULES)
     reporting = "USD"
     for i, p in enumerate(cand):
-        df = read_table(p)
+        sheet, sheet_note = _best_sheet(p)
+        df = read_table(p, sheet=sheet)
+        if sheet_note:
+            notes.append(f"{p.name}: {sheet_note}")
         df.columns = [clean_text(c) for c in df.columns]
         low = {c.lower() for c in df.columns}
         if {"record_id", "include", "exclusion_reason", "supplier_key"} <= low or p.stem.endswith("_audit"):
@@ -660,6 +688,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                          f"share a category) (CHECK)")
         name = re.sub(r"[^a-z0-9]+", "_", p.stem.lower()).strip("_") or f"src{i}"
         src = {"name": name, "file": _uniq([p.name, re.sub(r"\d+", "*", p.stem) + p.suffix]),
+               **({"sheet": sheet} if sheet is not None else {}),
                "record_id": {"column": roles.get("record_id", df.columns[0])},
                "amount_type": "net", "columns": cols}
         amt_col = roles.get("amount", "")

@@ -192,3 +192,26 @@ def test_vague_lines_get_low_confidence_and_no_specific_guess(tmp_path):
     assert o.loc["L4", "l2"] == "Stationery"             # the supplier's other lines decide
     rv = rep["review"]
     assert rv["lines"] >= 3 and 0 < rv["spend_share"] <= 1 and rv["coverage_l2_spend"] == 1.0
+
+
+def test_workbook_with_a_cover_sheet_reads_the_lines_sheet(tmp_path):
+    n = 120
+    lines = pd.DataFrame({"Line ID": [f"L{i}" for i in range(n)], "Supplier Name": ["Acme Inc", "Beta LLC"] * (n // 2),
+                          "Description": ["copy paper", "toner"] * (n // 2), "Invoice Date": ["2025-01-10"] * n,
+                          "Amount": ["12.50"] * n, "Status": ["Paid", "Approved"] * (n // 2)})
+    with pd.ExcelWriter(tmp_path / "export.xlsx") as w:
+        pd.DataFrame({"Report": ["Accounts payable export", "Generated 2025-02-01"]}).to_excel(w, sheet_name="Cover",
+                                                                                             index=False)
+        lines.to_excel(w, sheet_name="Lines", index=False)
+    pd.DataFrame({"L1": ["Office"], "L2": ["Paper"]}).to_csv(tmp_path / "tree.csv", index=False)
+    cfg, text = _draft(tmp_path, "tree.csv")
+    src = cfg["sources"][0]
+    assert src["sheet"] == "Lines" and src["columns"]["amount"] == "Amount" and "CHECK sheet" in text
+    rep, out = _run(tmp_path)
+    assert len(out) == n and set(out["exclusion_reason"]) <= {"", "DUPLICATE"}
+    # without the sheet the error names the sheets
+    cfg2 = yaml.safe_load((tmp_path / "c.yaml").read_text())
+    cfg2["sources"][0].pop("sheet")
+    (tmp_path / "c.yaml").write_text(yaml.safe_dump(cfg2))
+    with pytest.raises(ConfigColumnError, match="Lines"):
+        _run(tmp_path)
