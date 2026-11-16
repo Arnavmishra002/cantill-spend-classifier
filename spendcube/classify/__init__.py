@@ -3,8 +3,9 @@
 Layers, cheapest first; each unit takes the first layer that is confident:
   1. memory      labels seen before for the same unit / supplier+text / item code
   2. supervised  TF-IDF + logistic regression trained on the company's labels
-  3. LLM         Claude (primary) + Gemini (second opinion) + judge, with the full
-                 tree, the supplier's other lines and nearest labelled examples
+  3. LLM         Claude Opus (primary), Claude Sonnet (second opinion on uncertain and
+                 high-spend units), Claude Opus judge on disagreements; the full tree,
+                 per-leaf scope notes, supplier profiles and nearest labelled examples
   4. offline     zero-shot retrieval (line text vs. tree paths) + propagation of
                  supplier / account category mix to blank or generic lines
 Works with zero labels: layers 1-2 switch off and 3-4 carry the load.
@@ -24,7 +25,7 @@ from ..ingest import read_table
 from ..paths import resolve_file
 from ..taxonomy import Taxonomy
 from ..textnorm import clean_text
-from .llm import LLMClassifier
+from .llm import LLMClassifier, llm_settings
 from .units import build_units
 from .vectors import DenseEncoder, KNNIndex, SparseVectorizer
 
@@ -131,7 +132,7 @@ def is_weak(desc_key: str) -> bool:
 
 def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_dir: Path,
              labels: pd.DataFrame | None = None, use_llm: bool = True,
-             train_df: pd.DataFrame | None = None) -> dict:
+             train_df: pd.DataFrame | None = None, llm_health: dict | None = None) -> dict:
     """Adds columns node, confidence, class_source to df. Returns stats.
 
     train_df: labelled rows from an earlier drop of the same company (e.g. A when
@@ -148,7 +149,7 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
     else:
         df = df.assign(_train=False)
     ccfg = cfg.get("classification", {})
-    lcfg = ccfg.get("llm", {})
+    lcfg = llm_settings(cfg)
     stats: dict = {}
     leaf_ids = list(tax.leaves)
     L = len(leaf_ids)
@@ -232,7 +233,7 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
     # ---- dense vectors + kNN exemplars (labelled units) for LLM hints
     knn_hint = defaultdict(list)
     if has_label.any() and use_llm:
-        enc = DenseEncoder(cfg, cache_dir, list(units["text"]))
+        enc = DenseEncoder(cfg, list(units["text"]))
         D = enc.encode(list(units["text"]))
         lab_idx = np.where(has_label)[0]
         index = KNNIndex(D[lab_idx])
@@ -256,8 +257,10 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
             from .enrich import add_scope_notes
             stats["scope_notes"] = add_scope_notes(tax, units, cfg, cache_dir)
         llm = LLMClassifier(cfg, tax, cache_dir)
+        if llm_health:
+            llm.apply_health(llm_health)
         if llm.enabled():
-            thr = float(lcfg.get("low_confidence_threshold", 0.75))
+            thr = float(lcfg.get("low_confidence_threshold", 0.5))
             cand = np.where(conf < thr)[0] if not zero_shot else np.arange(U)
             cand = cand[units["current"].values[cand]]
             # biggest spend first; cap the number of units sent
@@ -308,22 +311,23 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                     gp["other_lines"] = sl
                 items.append({"uid": r["unit_id"], "payload": payload, "group": sk, "group_payload": gp})
             log.info("LLM: %d units to classify", len(items))
-            res = llm.classify_units(items, vote_threshold=float(lcfg.get("vote_threshold", 0.8)))
-            # spend-weighted scoring: the units holding most of the spend get a second,
-            # independent read by the strongest model
-            share = float(lcfg.get("escalate_top_spend_share", 0.0))
+            # spend-weighted scoring: the units holding the top share of spend always get
+            # a second, independent opinion (plus every unit the primary is unsure about)
+            priority = []
+            share = float(lcfg.get("second_top_spend_share", 0.5))
             if share > 0 and items:
                 sp = units.set_index("unit_id")["spend"]
-                order_u = sorted(items, key=lambda it: -sp.get(it["uid"], 0.0))
                 tot = float(sum(sp.get(it["uid"], 0.0) for it in items)) or 1.0
-                pick, acc = [], 0.0
-                for it in order_u[: int(lcfg.get("escalate_max_units", 400))]:
+                acc = 0.0
+                for it in sorted(items, key=lambda it: -sp.get(it["uid"], 0.0))[
+                        : int(lcfg.get("second_top_spend_max_units", 400))]:
                     if acc / tot >= share:
                         break
-                    pick.append(it)
+                    priority.append(it["uid"])
                     acc += sp.get(it["uid"], 0.0)
-                stats["escalation"] = {"units": len(pick), "spend_share": round(acc / tot, 3),
-                                       "changed": llm.escalate(pick, res)}
+                stats["second_opinion_top_spend"] = {"units": len(priority), "spend_share": round(acc / tot, 3)}
+            res = llm.classify_units(items, vote_threshold=float(lcfg.get("vote_threshold", 0.7)),
+                                     priority=priority)
             uidx = pd.Series(range(U), index=units["unit_id"])
             for u, v in res.items():
                 i = uidx[u]
@@ -337,8 +341,7 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                 probs[i] = 0.0
                 probs[i, j] = 1.0
                 conf[i] = c_llm
-                source[i] = ("llm_escalated" if v.get("escalated") else "llm_judge" if v.get("judged")
-                             else "llm_agree" if v.get("agree") else "llm")
+                source[i] = "llm_judge" if v.get("judged") else ("llm_agree" if v.get("agree") else "llm")
             llm_stats = llm.summary()
     stats["llm"] = llm_stats
 

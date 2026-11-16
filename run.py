@@ -23,21 +23,34 @@ from spendcube.classify.llm import load_dotenv_if_present  # noqa: E402
 def _setup_logging(level: str):
     logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO),
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
-    for noisy in ("httpx", "httpx2", "anthropic", "google_genai", "urllib3"):
+    for noisy in ("httpx", "httpx2", "anthropic", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
+def _input_errors():
+    from spendcube.config import ConfigError
+    from spendcube.ingest import ConfigColumnError
+    return (ConfigError, ConfigColumnError, FileNotFoundError)
+
+
 def cmd_run(a):
-    from spendcube.pipeline import run
+    from spendcube.pipeline import LLMUnavailableError, run
     from spendcube.validate import ValidationError
     try:
         rep = run(a.config, a.data, a.out, use_llm=not a.no_llm, use_labels=not a.no_labels,
-                  cache_dir=a.cache_dir, llm_cost_cap=a.max_llm_cost)
+                  cache_dir=a.cache_dir, llm_cost_cap=a.max_llm_cost, require_llm=a.require_llm)
     except ValidationError as e:
         print(str(e), file=sys.stderr)
         return 2
+    except _input_errors() as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    except LLMUnavailableError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 3
     v = rep["validation"]
     llm = rep["classification"].get("llm") or {}
+    health = rep.get("llm_health") or {}
     print("\n=== RUN OK ===")
     print(f"output      : {rep['output']}  ({v['rows']} rows)")
     print(f"included    : {v['included_rows']} rows, spend {v['included_spend']:,.2f}")
@@ -46,9 +59,14 @@ def cmd_run(a):
           f"+ excluded {v['excluded_spend']:,.2f}")
     print(f"suppliers   : {v['suppliers']}   items: {v['items']}")
     print(f"class source: {rep['classification'].get('class_source_lines')}")
-    if llm:
+    if health.get("enabled") and not health.get("usable"):
+        print("LLM         : NOT USED. " + health.get("message", "no provider answered"))
+    elif not health.get("enabled"):
+        print(f"LLM         : {health.get('message', 'off')}")
+    else:
         print(f"LLM         : {llm.get('calls', 0)} calls, ${llm.get('cost_usd', 0):.3f}, "
-              f"cache hits {llm.get('cache_hits', 0)}")
+              f"cache hits {llm.get('cache_hits', 0)}, models {llm.get('primary')} / {llm.get('second')} "
+              f"/ {llm.get('judge')}")
     print(f"runtime     : {rep['runtime_sec']}s")
     print(f"audit/report: {rep['audit']}  {rep['report']}")
     return 0
@@ -56,8 +74,12 @@ def cmd_run(a):
 
 def cmd_init(a):
     from spendcube.init_config import draft_config
-    path = draft_config(a.data, a.taxonomy, a.out, company=a.company, use_llm=not a.no_llm,
-                        files=a.files)
+    try:
+        path = draft_config(a.data, a.taxonomy, a.out, company=a.company, use_llm=not a.no_llm,
+                            files=a.files)
+    except _input_errors() + (ValueError,) as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
     print(f"Drafted config written to {path}. Review the TODO/CHECK comments, then run it.")
     return 0
 
@@ -97,7 +119,11 @@ def main(argv=None):
         a = p.parse_args(argv[1:])
         _setup_logging("WARNING")
         from spendcube.check import check_config
-        print(check_config(a.config, a.data))
+        try:
+            print(check_config(a.config, a.data))
+        except _input_errors() as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
         return 0
     if argv and argv[0] == "evaluate":
         p = argparse.ArgumentParser(prog="run.py evaluate", parents=[common])
@@ -116,6 +142,8 @@ def main(argv=None):
     p.add_argument("--data", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--no-labels", action="store_true", help="ignore labels (zero-shot run)")
+    p.add_argument("--require-llm", action="store_true",
+                   help="stop (exit 3) if the LLM is enabled but no Claude model answers")
     a = p.parse_args(argv)
     _setup_logging(a.log_level)
     return cmd_run(a)

@@ -90,21 +90,20 @@ classification:
     reason_column: exclusion_reason
   llm:
     enabled: true
-    primary: {vendor: anthropic, model: claude-sonnet-5-5, effort: low}
-    second: {vendor: gemini, model: gemini-2.5-flash}
-    judge: {vendor: anthropic, model: claude-opus-5-5, effort: low}
-    fallbacks: [{vendor: gemini, model: gemini-2.5-flash}]
+    primary: {vendor: anthropic, model: claude-opus-5-5, effort: low}
+    second: {vendor: anthropic, model: claude-sonnet-5-5, effort: low}   # second opinion
+    judge: {vendor: anthropic, model: claude-opus-5-5, effort: low}      # decides disagreements
+    fallbacks: [{vendor: anthropic, model: claude-sonnet-5-5, effort: low}]
     batch_size: 25
     concurrency: 6
     low_confidence_threshold: 0.5
     vote_threshold: 0.7
-    second_max_units: 300          # free-tier Gemini: capped, circuit breaker on quota
-    escalate_top_spend_share: 0.5  # units holding the top 50% of LLM-classified spend get an Opus read
-    escalate_max_units: 400
+    second_max_units: 1500
+    second_top_spend_share: 0.5
+    second_top_spend_max_units: 400
     max_units: 20000
     cost_cap_usd: 10.0
-  # kNN hints use local LSA vectors; Gemini embeddings are opt-in (free-tier quota is too slow for bulk)
-  embeddings: {provider: lsa, gemini_model: gemini-embedding-001, dim: 256, time_budget_sec: 120}
+  embeddings: {provider: lsa, dim: 256}
 
 output:
   template: output_template.csv

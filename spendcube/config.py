@@ -71,19 +71,27 @@ DEFAULTS: dict[str, Any] = {
     "classification": {
         "text_fields": ["description", "supplier_name", "gl_description", "context"],
         "labels": None,
+        # Claude only. These keys are exactly the ones spendcube/classify/llm.py reads, so a
+        # config without an llm block still gets the full Claude setup.
         "llm": {
             "enabled": True,
-            "providers": ["anthropic", "gemini"],
-            "anthropic_model": "claude-haiku-5-5",
-            "gemini_model": "gemini-2.5-flash",
+            "primary": {"vendor": "anthropic", "model": "claude-opus-5-5", "effort": "low"},
+            "second": {"vendor": "anthropic", "model": "claude-sonnet-5-5", "effort": "low"},
+            "judge": {"vendor": "anthropic", "model": "claude-opus-5-5", "effort": "low"},
+            "fallbacks": [{"vendor": "anthropic", "model": "claude-sonnet-5-5", "effort": "low"}],
             "batch_size": 25,
-            "max_units": 20000,
-            "cost_cap_usd": 4.0,
-            "use_for": "low_confidence",   # low_confidence | all
-            "low_confidence_threshold": 0.75,
             "concurrency": 6,
+            "low_confidence_threshold": 0.5,   # labelled runs: LLM only below this supervised confidence
+            "vote_threshold": 0.7,             # second opinion below this primary confidence
+            "second_max_units": 1500,
+            "second_top_spend_share": 0.5,     # the units holding the top half of spend always get one
+            "second_top_spend_max_units": 400,
+            "max_units": 20000,
+            "cost_cap_usd": 15.0,
+            "supplier_profiles": True,
+            "scope_notes": True,
         },
-        "embeddings": {"provider": "lsa", "gemini_model": "gemini-embedding-001", "time_budget_sec": 120},
+        "embeddings": {"provider": "lsa", "dim": 256},
     },
     "output": {"template": None},
 }

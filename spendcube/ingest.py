@@ -96,14 +96,20 @@ def _looks_untitled(raw: pd.DataFrame) -> bool:
     return (first != "").sum() < max(2, 0.5 * raw.shape[1])
 
 
-def _resolve(cols, df_cols, where):
+class ConfigColumnError(ValueError):
+    """A column named in the config is not in the input file."""
+
+
+def _resolve(cols, df_cols, where, path=None):
     if cols is None:
         return []
     if isinstance(cols, str):
         cols = [cols]
     missing = [c for c in cols if c not in df_cols]
     if missing:
-        raise KeyError(f"{where}: column(s) {missing} not in file. Available: {list(df_cols)}")
+        f = f" of {Path(path).name}" if path else ""
+        raise ConfigColumnError(f"config {where}: column {missing} is not in the header{f}. "
+                                f"Columns found: {list(df_cols)}")
     return list(cols)
 
 
@@ -119,7 +125,7 @@ def ingest_source(src: dict, data_dir: Path, cfg: dict | None = None) -> pd.Data
     rid = src["record_id"]
     if isinstance(rid, str):
         rid = {"column": rid}
-    id_col = _resolve(rid["column"], df.columns, f"{src['name']}.record_id")[0]
+    id_col = _resolve(rid["column"], df.columns, f"{src['name']}.record_id", path)[0]
     out = pd.DataFrame(index=df.index)
     ids = df[id_col].map(clean_text)
     if (ids == "").any():
@@ -132,7 +138,7 @@ def ingest_source(src: dict, data_dir: Path, cfg: dict | None = None) -> pd.Data
     out["row_order"] = range(n)
 
     for field, cols in (src.get("columns") or {}).items():
-        cols = _resolve(cols, df.columns, f"{src['name']}.columns.{field}")
+        cols = _resolve(cols, df.columns, f"{src['name']}.columns.{field}", path)
         vals = [df[c].map(clean_text) for c in cols]
         if len(vals) == 1:
             out[field] = vals[0]

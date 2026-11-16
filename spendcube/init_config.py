@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from .config import DEFAULTS
 from .ingest import read_table
 from .textnorm import clean_text, parse_date_series, parse_number_series
 
@@ -456,17 +458,9 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             "company_context": ctx or "TODO: one or two sentences on the industry and what it buys",
             "consistency": {"group_fields": consistency_groups, "strong": 0.85, "weak": 0.7, "share": 0.7},
             "labels": None,
-            "llm": {
-                "enabled": True,
-                "primary": {"vendor": "anthropic", "model": "claude-sonnet-5-5", "effort": "low"},
-                "second": {"vendor": "gemini", "model": "gemini-2.5-flash"},
-                "judge": {"vendor": "anthropic", "model": "claude-opus-5-5", "effort": "low"},
-                "fallbacks": [{"vendor": "gemini", "model": "gemini-2.5-flash"}],
-                "batch_size": 25, "concurrency": 6, "vote_threshold": 0.7, "second_max_units": 300,
-                "escalate_top_spend_share": 0.5, "escalate_max_units": 400,
-                "max_units": 20000, "cost_cap_usd": 8.0,
-            },
-            "embeddings": {"provider": "lsa", "gemini_model": "gemini-embedding-001", "dim": 256, "time_budget_sec": 120},
+            # Claude only, same keys as the defaults in spendcube/config.py
+            "llm": copy.deepcopy(DEFAULTS["classification"]["llm"]),
+            "embeddings": {"provider": "lsa", "dim": 256},
         },
         "output": {"template": "output_template.csv"},
     }
