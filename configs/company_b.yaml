@@ -1,0 +1,106 @@
+# Company B: metal packaging manufacturer (2024). One AP invoice-line file from
+# 8 ERPs (JDE + SAP), 25 currencies, vendor IDs only (no supplier names).
+company: B
+reporting_currency: USD
+
+search_dirs: [data/company_B, data/Cantill_DataML_Task_Kit/company_B]
+
+taxonomy:
+  file: [taxonomy_B.csv, "taxonomy*.csv"]
+  level_columns: [category_l1, category_l2, category_l3]
+
+sources:
+  - name: ap
+    file: [invoice_lines.csv, "*invoice*line*.csv", "*invoice*.csv"]
+    record_id: {column: line_id}
+    amount_type: net               # tax is posted on separate lines (excluded below)
+    columns:
+      invoice_number: invoice_number
+      invoice_line: invoice_line
+      date: invoice_date           # brief: FX for the invoice month
+      posting_date: posting_date   # fallback when the invoice date is broken
+      supplier_id: vendor_id
+      description: line_description
+      item_code: material_number
+      quantity: quantity
+      amount: line_amount
+      currency: currency
+      fx_rate: currency_rate
+      po_number: po_number
+      gl_account: gl_account
+      gl_description: gl_account_description
+      document_type: document_type
+      entity: company_code
+      context: [po_type]
+
+fx:
+  table: [fx_rates_usd.csv, "fx*.csv"]
+  table_columns: {currency: currency, month: month, rate: units_per_usd}
+  rate_semantics: units_per_reporting      # currency_rate = units of line currency per 1 USD
+  ignore_rate_for_reporting_currency: true # brief: USD lines are already USD
+  sanity_band: [0.33, 3.0]                 # JDE rates against MXN etc. are rejected -> table
+
+exclusion_precedence: [CANCELLED, NOT_APPROVED, NON_PROCUREMENT, DUPLICATE]
+
+non_procurement:
+  - name: intercompany_gl_account
+    field: gl_account_description
+    pattern: '(?i)^IC\d+$|\bI/C\b|\bIC Payables?\b|intercompany|inter-company|\binterco\b'
+  - name: intercompany_supplier_type
+    field: supplier_type              # vendor types only ever used on intercompany accounts
+    values: ["5406", "2742"]
+  - name: tax_lines
+    field: description
+    pattern: '(?i)^\s*(accrued[\s-]*)?((state\s*(&|and|/)\s*local\s+tax(es)?)|((state/rtd\s+)?sales\s*(&\s*use\s*)?tax(\s+expense)?(\s+\d+%)?)|(gst\s+input\s+tax)|(withholding\s+tax)|(use\s+tax)|(vat( payable| input| output)?))\s*-?\s*$'
+  - name: finance_and_other_non_supplier
+    field: description
+    pattern: '(?i)\b(interest (charge|expense|payment)s?|bank (charge|fee)s?|royalt(y|ies)|dividends?|loan repayment|revenue share|partner billing|penalt(y|ies) (interest|tax))\b'
+
+duplicates:
+  within_source: true   # identical line posted twice (all fields equal except line_id)
+
+dates:
+  dayfirst: false
+  valid_window_years: [2019, 2026]
+  max_days_after_posting: 120
+  max_days_before_posting: 400
+
+dedupe:
+  supplier:
+    use_supplier_id: true
+    supplier_id_global: true     # V5xxxxx ids are unique across the 8 ERPs
+  item:
+    use_item_code: true
+    max_descriptions_per_code: 25
+
+classification:
+  company_context: >-
+    Global metal packaging manufacturer (aluminium beverage cans and can ends), plants in
+    8 regions. Buys aluminium coil and ingot, coatings and inks, can ends, pallets and
+    packaging, freight and customs, utilities, MRO spares, facility and professional
+    services, IT, HR services. Descriptions are in many languages; many are blank.
+  text_fields: [description, gl_description, context]
+  labels:
+    file: seed_labels.csv
+    quality: 0.92            # 'labelled quickly by an analyst (useful, not perfect)'
+    training_data_dir: data/company_B
+    id_column: line_id
+    level_columns: [category_l1, category_l2, category_l3]
+    include_column: include
+    reason_column: exclusion_reason
+  llm:
+    enabled: true
+    primary: {vendor: anthropic, model: claude-sonnet-5-5, effort: low}
+    second: {vendor: gemini, model: gemini-2.5-flash}
+    judge: {vendor: anthropic, model: claude-opus-5-5, effort: low}
+    fallbacks: [{vendor: gemini, model: gemini-2.5-flash}]
+    batch_size: 25
+    concurrency: 6
+    low_confidence_threshold: 0.5
+    vote_threshold: 0.7
+    max_units: 8000
+    cost_cap_usd: 4.0
+  embeddings: {provider: auto, gemini_model: gemini-embedding-001, dim: 256}
+
+output:
+  template: output_template.csv

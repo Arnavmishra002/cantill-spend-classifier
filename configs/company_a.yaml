@@ -1,0 +1,123 @@
+# Company A: mining operations of a chemicals group (ZAR). Two systems:
+# SAP goods receipts (net, authoritative) + accounts-payable invoice tool (gross).
+company: A
+reporting_currency: ZAR
+
+# Where to look for the tree / labels / training rows when a new drop (A2) does
+# not repeat them. Input records are only ever read from --data.
+search_dirs: [data/company_A, data/Cantill_DataML_Task_Kit/company_A]
+
+taxonomy:
+  file: [taxonomy_A.csv, "taxonomy*.csv"]
+  level_columns: [category_l1, category_l2, category_l3]
+
+sources:
+  - name: erp
+    file: [erp_goods_receipts.csv, "*erp*.csv", "*goods*receipt*.csv"]
+    record_id: {column: line_id, prefix: "ERP:"}
+    amount_type: net               # value_zar is net of VAT
+    currency_default: ZAR          # value_zar is already ZAR (document_currency is the PO currency)
+    columns:
+      date: posting_date
+      supplier_name: supplier_name
+      supplier_id: vendor_id
+      description: [material_short_text, service_short_text]
+      item_code: material_number
+      quantity: quantity
+      uom: uom
+      amount: value_zar
+      po_number: po_number
+      po_item: po_item
+      context: [spend_type, material_type]
+  - name: tool
+    file: [invoice_tool_export.csv, "*invoice*tool*.csv", "*invoice*.csv"]
+    record_id: {column: tool_record_id, prefix: "TOOL:"}
+    amount_type: gross             # remove VAT at the rate shown
+    tax_rate_default: 0.15         # brief: blank VAT rate -> 15%
+    currency_default: ZAR
+    columns:
+      invoice_number: invoice_number
+      date: invoice_date
+      supplier_name: supplier_name_as_captured
+      po_reference: po_reference
+      description: line_text
+      quantity: quantity
+      amount: gross_amount
+      tax_rate: vat_rate
+      currency: currency
+      status: status
+    status_map:
+      include: [paid, approved]
+      CANCELLED: [cancelled, canceled, void]
+      NOT_APPROVED: [rejected, on hold, submitted, disputed, pending, draft]
+      unknown_status_outcome: NOT_APPROVED   # brief: only approved or paid count
+
+exclusion_precedence: [CANCELLED, NOT_APPROVED, NON_PROCUREMENT, DUPLICATE]
+
+# A's lines are all purchases from suppliers; the patterns below only guard
+# against obvious non-procurement text in tool-only invoices.
+non_procurement:
+  - name: tax_or_finance_text
+    sources: [tool]
+    field: description
+    pattern: '(?i)\b(vat (adjust|payment|refund)|interest (charge|on overdue)|penalt(y|ies)|bank charges?|intercompany|inter-company|royalt(y|ies))\b'
+
+duplicates:
+  within_source: false   # handled by cross-source clustering ("exported twice")
+
+cross_source:
+  enabled: true
+  primary: erp
+  secondary: tool
+  po_pattern: '(\d{10})'                 # SAP PO numbers inside 'PO#4510...', '4510.../10.0'
+  po_item_pattern: '/(\d+)(?:\.0+)?$'
+  invoice_prefixes: ["TAX INV", "INV/", "INV", "SI-", "SI", "IN"]
+  amount_tolerance_abs: 0.05
+  amount_tolerance_rel: 0.0005
+  text_similarity_min: 80
+  allow_quantity_variance: true
+  quantity_tolerance_rel: 0.06
+  unit_price_tolerance_rel: 0.005
+
+dates:
+  dayfirst: true
+  valid_window_years: [2015, 2030]
+
+dedupe:
+  supplier:
+    use_supplier_id: true
+    fuzzy_threshold: 92
+  item:
+    use_item_code: true
+    fuzzy_threshold: 95
+
+classification:
+  company_context: >-
+    Underground coal mining operations of a chemicals group in South Africa (amounts in ZAR).
+    Buys mining equipment (continuous miners, shuttle cars, roof bolters, flameproof diesel
+    vehicles), spares, overhauls and repairs, roof support consumables (bolts, resin, mesh),
+    explosives, stone dust, conveyor and ventilation services.
+  text_fields: [description, supplier_name, context]
+  labels:
+    file: labels_A.csv
+    training_data_dir: data/company_A
+    id_column: record_id
+    level_columns: [category_l1, category_l2, category_l3]
+    supplier_key_column: supplier_key
+    item_key_column: item_key
+  llm:
+    enabled: true
+    primary: {vendor: anthropic, model: claude-sonnet-5-5, effort: low}
+    second: {vendor: gemini, model: gemini-2.5-flash}
+    judge: {vendor: anthropic, model: claude-opus-5-5, effort: low}
+    fallbacks: [{vendor: gemini, model: gemini-2.5-flash}]
+    batch_size: 25
+    concurrency: 6
+    low_confidence_threshold: 0.5
+    vote_threshold: 0.7
+    max_units: 6000
+    cost_cap_usd: 4.0
+  embeddings: {provider: auto, gemini_model: gemini-embedding-001, dim: 256}
+
+output:
+  template: output_template.csv
