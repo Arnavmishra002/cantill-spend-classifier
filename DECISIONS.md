@@ -211,14 +211,30 @@ vendor ID (`supplier_id_global: true`). Without names, two IDs of one real suppl
 | Model roles | Sonnet or Opus as primary | Opus primary, Sonnet second opinion, Opus judge (owner's decision) | On a sample Opus was 1 to 3 points better than Sonnet at about twice the cost |
 | LLM vendor | Claude only, or Claude with Gemini | Claude only (owner's decision) | The free-tier Gemini key returned quota errors after a few calls |
 | Vectors for nearest-neighbour hints | API embeddings or local LSA | local LSA (TF-IDF reduced with SVD), indexed with FAISS | no API dependency, deterministic |
-| Group consistency | off, by supplier, by supplier and contract | see 5.4 | see 5.4 |
+| Group consistency and general leaves | off, or on | on (see 5.4) | A with labels hidden: L3 from 69.4% to 71.6% of spend |
 
-### 5.4 Group consistency
-A line the classifier is unsure about can take the dominant category of its supplier's (or a configured contract
-field's) confident lines. On A without labels this lifted L3 from 57% to 63% (line-weighted), but a closer look
-showed that lines changed at a group share just above 0.70 were almost never right, while the overall gain came from
-groups with a clearer majority. The share threshold is re-tuned on the Opus run; the measured result is in
-APPROACH.md.
+### 5.4 Top confusions on an unseen tree, and the generic fixes
+With Claude Opus as primary and A's labels hidden, I listed the ten largest L3 confusions by spend. Three generic
+causes explain them:
+1. General leaves. A leaf that repeats its parent's name ("Continuous Miners > Continuous Miners") is the branch's
+   general bucket. In every A branch that has one, the client files most of the branch's spend there (48% to 99.9%),
+   while the model picks a specific sibling whenever the text names one ("build seal" lines go to "Seal Building";
+   the client files them under the general leaf). About 9% of A's spend sat in such confusions. The old prompt
+   collapsed "X > X" into "X", so the model could not even see the general leaf. Fixes: the prompt and the scope
+   notes now show full paths and mark general leaves, with a rule to prefer them unless a line clearly names a
+   specific sibling; and a specific leaf picked with confidence below 0.6 falls back to its branch's general leaf.
+   The marker alone did not change the model's choices; the fallback lifted L3 from 69.4% to 71.1% of spend.
+2. Supplier and contract habits. Vague lines ("Mining services", "General mechanical") are filed by the client
+   according to the supplier's or contract's main category. Group consistency handles this: a line below 0.7
+   confidence takes the dominant category of its group's confident lines (0.8 or above) when that category holds at
+   least 70% of the group's confident spend and the group has at least 3 confident lines. Groups are the supplier and,
+   for A, the contract number. A first version with a 0.85 threshold changed lines that were right only 31% of the
+   time; the re-tuned version, together with the fallback, takes L3 from 69.4% to 71.6% of spend (62.3% to 67.4% of
+   lines).
+3. Sibling ambiguity the text cannot settle ("mini rebuild" filed as a full rather than an intervention overhaul,
+   rock bits filed under drill steel). No generic fix; these stay as errors.
+Nothing in the code or prompts names an A category. The thresholds were measured on A, which is a risk for C; they
+are config values and were kept moderate.
 
 ### 5.5 Confidence
 The confidence is the probability that the chosen leaf (deepest level) is right.
