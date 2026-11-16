@@ -3,6 +3,7 @@
 
   python run.py --config configs/company_a.yaml --data data/company_A --out out/arnav_mishra__A.csv
   python run.py init-config --data data/company_C --taxonomy taxonomy_C.csv --out configs/company_c.yaml
+  python run.py check-config --config configs/company_c.yaml --data data/C
   python run.py evaluate --config configs/company_a.yaml --data data/company_A --mode zero_shot
 """
 from __future__ import annotations
@@ -64,7 +65,8 @@ def cmd_init(a):
 def cmd_eval(a):
     from spendcube.evaluate import evaluate
     res = evaluate(a.config, a.data, mode=a.mode, use_llm=not a.no_llm, cache_dir=a.cache_dir,
-                   holdout=a.holdout, seed=a.seed, max_llm_cost=a.max_llm_cost, sample_units=a.sample_units)
+                   holdout=a.holdout, seed=a.seed, max_llm_cost=a.max_llm_cost, sample_units=a.sample_units,
+                   labelled_only=a.labelled_only)
     print(json.dumps(res, indent=2, default=str))
     return 0
 
@@ -88,6 +90,15 @@ def main(argv=None):
         a = p.parse_args(argv[1:])
         _setup_logging(a.log_level)
         return cmd_init(a)
+    if argv and argv[0] == "check-config":
+        p = argparse.ArgumentParser(prog="run.py check-config", parents=[common])
+        p.add_argument("--config", required=True)
+        p.add_argument("--data", required=True)
+        a = p.parse_args(argv[1:])
+        _setup_logging("WARNING")
+        from spendcube.check import check_config
+        print(check_config(a.config, a.data))
+        return 0
     if argv and argv[0] == "evaluate":
         p = argparse.ArgumentParser(prog="run.py evaluate", parents=[common])
         p.add_argument("--config", required=True)
@@ -96,6 +107,7 @@ def main(argv=None):
         p.add_argument("--holdout", type=float, default=0.2)
         p.add_argument("--seed", type=int, default=0)
         p.add_argument("--sample-units", type=int, default=None)
+        p.add_argument("--labelled-only", action="store_true", help="LLM only on units that carry labels")
         a = p.parse_args(argv[1:])
         _setup_logging(a.log_level)
         return cmd_eval(a)

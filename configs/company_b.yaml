@@ -98,8 +98,11 @@ classification:
     concurrency: 6
     low_confidence_threshold: 0.5
     vote_threshold: 0.7
-    max_units: 8000
-    cost_cap_usd: 4.0
+    second_max_units: 300          # free-tier Gemini: capped, circuit breaker on quota
+    escalate_top_spend_share: 0.5  # units holding the top 50% of LLM-classified spend get an Opus read
+    escalate_max_units: 400
+    max_units: 20000
+    cost_cap_usd: 10.0
   # kNN hints use local LSA vectors; Gemini embeddings are opt-in (free-tier quota is too slow for bulk)
   embeddings: {provider: lsa, gemini_model: gemini-embedding-001, dim: 256, time_budget_sec: 120}
 

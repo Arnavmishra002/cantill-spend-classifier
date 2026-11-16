@@ -24,14 +24,33 @@ TEXT_JOIN_FIELDS = {"description", "context", "supplier_name", "gl_description"}
 _ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
 
 
-def read_table(path: Path, sheet=None, delimiter=None, encoding=None) -> pd.DataFrame:
-    """Read CSV/TSV/TXT/XLSX as all-string columns, blanks kept as ''."""
+def detect_header_row(df_nohdr: pd.DataFrame, max_scan: int = 15) -> int:
+    """Index of the first row that looks like a header: mostly non-blank, mostly text,
+    and followed by rows with a similar number of filled cells."""
+    best = 0
+    n = df_nohdr.shape[1]
+    for i in range(min(max_scan, len(df_nohdr))):
+        row = df_nohdr.iloc[i].fillna("").astype(str).str.strip()
+        filled = (row != "").sum()
+        texty = row.str.contains(r"[A-Za-z]", regex=True).sum()
+        if filled >= max(2, 0.6 * n) and texty >= 0.6 * filled:
+            return i
+    return best
+
+
+def read_table(path: Path, sheet=None, delimiter=None, encoding=None, header_row=None) -> pd.DataFrame:
+    """Read CSV/TSV/TXT/XLSX as all-string columns, blanks kept as ''.
+    header_row: 0-based row holding the column names ('auto' = detect title rows)."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Input file not found: {path}")
     suf = path.suffix.lower()
     if suf in (".xlsx", ".xlsm", ".xls"):
-        df = pd.read_excel(path, sheet_name=sheet or 0, dtype=str)
+        hr = header_row
+        if hr == "auto" or hr is None:
+            raw = pd.read_excel(path, sheet_name=sheet or 0, dtype=str, header=None, nrows=20)
+            hr = detect_header_row(raw) if hr == "auto" or _looks_untitled(raw) else 0
+        df = pd.read_excel(path, sheet_name=sheet or 0, dtype=str, header=int(hr))
         return df.fillna("")
     if suf == ".parquet":
         return pd.read_parquet(path).astype(str).replace({"nan": "", "None": ""})
@@ -47,13 +66,34 @@ def read_table(path: Path, sheet=None, delimiter=None, encoding=None) -> pd.Data
     if text is None:
         text = raw.decode("latin-1", errors="replace")
     if delimiter is None:
-        sample = text[:20000]
-        try:
-            delimiter = csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
-        except csv.Error:
-            delimiter = ","
+        lines = text.splitlines()[:200]
+        # pick the delimiter that splits most lines into the same (largest) number of fields
+        best, score = ",", -1
+        for cand in (",", ";", "\t", "|"):
+            counts = [len(r) for r in csv.reader(lines, delimiter=cand)]
+            if not counts:
+                continue
+            mode = max(set(counts), key=counts.count)
+            sc = counts.count(mode) * (mode > 1) * mode
+            if sc > score:
+                best, score = cand, sc
+        delimiter = best
+    hr = header_row
+    if hr == "auto" or hr is None:
+        head = list(csv.reader(io.StringIO("\n".join(text.splitlines()[:20])), delimiter=delimiter))
+        width = max((len(r) for r in head), default=0)
+        probe = pd.DataFrame([r + [""] * (width - len(r)) for r in head])
+        hr = detect_header_row(probe) if (hr == "auto" or _looks_untitled(probe)) else 0
     return pd.read_csv(io.StringIO(text), sep=delimiter, dtype=str, keep_default_na=False,
-                       na_filter=False, engine="c")
+                       na_filter=False, engine="c", skiprows=int(hr) if hr else None)
+
+
+def _looks_untitled(raw: pd.DataFrame) -> bool:
+    """True when the first row is clearly not a header (a title line with few cells)."""
+    if raw.empty:
+        return False
+    first = raw.iloc[0].fillna("").astype(str).str.strip()
+    return (first != "").sum() < max(2, 0.5 * raw.shape[1])
 
 
 def _resolve(cols, df_cols, where):
@@ -71,7 +111,7 @@ def ingest_source(src: dict, data_dir: Path, cfg: dict | None = None) -> pd.Data
     # input records must come from the run's own data folder (never a fallback dir)
     path = resolve_file(src["file"], cfg or {}, data_dir, dirs=[Path(data_dir)])
     df = read_table(path, sheet=src.get("sheet"), delimiter=src.get("delimiter"),
-                    encoding=src.get("encoding"))
+                    encoding=src.get("encoding"), header_row=src.get("header_row"))
     df.columns = [clean_text(c) for c in df.columns]
     n = len(df)
     log.info("source %s: %d rows from %s", src["name"], n, path.name)

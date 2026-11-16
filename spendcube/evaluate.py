@@ -68,6 +68,45 @@ def score(out: pd.DataFrame, labels: pd.DataFrame, tax, restrict_ids=None) -> di
     return res
 
 
+def bcubed(pred: pd.Series, gold: pd.Series) -> dict:
+    """B-cubed precision/recall/F1 of a clustering (one value per item)."""
+    df = pd.DataFrame({"p": pred.values, "g": gold.values})
+    n_pg = df.groupby(["p", "g"]).size()
+    n_p = df.groupby("p").size()
+    n_g = df.groupby("g").size()
+    pg = n_pg.reset_index(name="n")
+    prec = float((pg["n"] ** 2 / pg["p"].map(n_p)).sum() / len(df))
+    rec = float((pg["n"] ** 2 / pg["g"].map(n_g)).sum() / len(df))
+    f1 = 2 * prec * rec / max(prec + rec, 1e-9)
+    return {"precision": round(prec, 4), "recall": round(rec, 4), "f1": round(f1, 4), "n": int(len(df))}
+
+
+def dedup_metrics(df: pd.DataFrame, labels: pd.DataFrame) -> dict | None:
+    """Score supplier/item keys against golden keys (A). Tool rows matched to an ERP
+    line on PO+amount (P1) borrow that line's golden key, which tests the spelling
+    variants of the second system too."""
+    if "supplier_key" not in labels.columns:
+        return None
+    lab = labels.set_index("record_id")
+    gold_s = df["record_id"].map(lab["supplier_key"])
+    gold_i = df["record_id"].map(lab["item_key"]) if "item_key" in lab else None
+    if "match_pass" in df.columns:
+        p1 = df["match_pass"].fillna("").str.startswith("P1")
+        gold_s = gold_s.where(~p1 | gold_s.notna(), df["matched_to"].map(lab["supplier_key"]))
+        if gold_i is not None:
+            gold_i = gold_i.where(~p1 | gold_i.notna(), df["matched_to"].map(lab["item_key"]))
+    res = {}
+    ok = gold_s.notna() & (gold_s != "")
+    res["supplier_all"] = bcubed(df.loc[ok, "supplier_key"], gold_s[ok])
+    big = gold_s[ok].value_counts().index[0]
+    ok2 = ok & (gold_s != big)
+    res["supplier_excl_largest_golden_bucket"] = bcubed(df.loc[ok2, "supplier_key"], gold_s[ok2])
+    if gold_i is not None:
+        oki = gold_i.notna() & (gold_i != "")
+        res["item"] = bcubed(df.loc[oki, "item_key"], gold_i[oki])
+    return res
+
+
 def exclusion_agreement(out: pd.DataFrame, labels: pd.DataFrame) -> dict | None:
     if "label_include" not in labels:
         return None
@@ -92,7 +131,8 @@ def _cost_per_1k(rep: dict, n_lines: int) -> float | None:
 
 def evaluate(config: str, data: str, mode: str = "zero_shot", use_llm: bool = True,
              cache_dir: str = ".cache", holdout: float = 0.2, seed: int = 0,
-             max_llm_cost: float | None = None, sample_units: int | None = None) -> dict:
+             max_llm_cost: float | None = None, sample_units: int | None = None,
+             labelled_only: bool = False) -> dict:
     cfg = load_config(config)
     data_dir = Path(data)
     tax = load_taxonomy(cfg, data_dir)
@@ -106,6 +146,13 @@ def evaluate(config: str, data: str, mode: str = "zero_shot", use_llm: bool = Tr
     res: dict = {"company": comp, "mode": mode, "llm": use_llm}
 
     cfg_path = config
+    if labelled_only:
+        # send only units that contain labelled lines to the LLM (cheap, unbiased on those lines)
+        c2 = copy.deepcopy(_strip(cfg))
+        c2["classification"]["llm"]["only_records"] = sorted(set(labels.loc[labels["node"].notna(), "record_id"]))
+        c2["classification"]["llm"]["max_units"] = 100000
+        cfg_path = outdir / f"{tag}_cfg.yaml"
+        cfg_path.write_text(yaml.safe_dump(c2, sort_keys=False))
     if sample_units:
         # classify a random sample of units with the LLM (cheap, unbiased estimate)
         c2 = copy.deepcopy(_strip(cfg))
@@ -124,6 +171,7 @@ def evaluate(config: str, data: str, mode: str = "zero_shot", use_llm: bool = Tr
             res["sampled_lines"] = len(restrict)
         res["classification"] = score(out, labels, tax, restrict)
         res["exclusions"] = exclusion_agreement(out, labels)
+        res["dedup_without_label_memory"] = dedup_metrics(rep["_df"], labels)
     elif mode == "supplier_holdout":
         raw = ingest_all(cfg, data_dir)
         names = raw["supplier_name"] if "supplier_name" in raw else pd.Series("", index=raw.index)

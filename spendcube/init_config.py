@@ -259,6 +259,30 @@ def _status_map(values: list[str]) -> dict:
     return m, unknown
 
 
+# rough units of currency per 1 USD, only to tell the direction of a rate column
+_TYPICAL_PER_USD = {"EUR": 0.92, "GBP": 0.79, "INR": 83.0, "JPY": 150.0, "CNY": 7.2, "ZAR": 18.5, "BRL": 5.2,
+                    "MXN": 17.5, "CAD": 1.36, "AUD": 1.52, "CHF": 0.89, "SEK": 10.5, "KRW": 1350.0,
+                    "AED": 3.67, "SAR": 3.75, "SGD": 1.35, "PLN": 4.0, "TRY": 32.0}
+
+
+def _guess_rate_semantics(df, cur_col, rate_col, reporting="USD") -> str | None:
+    if reporting != "USD":
+        return None
+    cur = df[cur_col].astype(str).str.strip().str.upper()
+    rate = parse_number_series(df[rate_col].astype(str))
+    votes = {"units_per_reporting": 0, "reporting_per_unit": 0}
+    for c, typ in _TYPICAL_PER_USD.items():
+        r = rate[(cur == c) & (rate > 0)]
+        if len(r) < 3:
+            continue
+        med = float(r.median())
+        a, b = abs(np.log(med / typ)), abs(np.log(med * typ))
+        votes["units_per_reporting" if a < b else "reporting_per_unit"] += len(r)
+    if not any(votes.values()):
+        return None
+    return max(votes, key=votes.get)
+
+
 def _company_context(tax_paths: list[str], samples: list[str]) -> str | None:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return None
@@ -310,6 +334,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                (".csv", ".tsv", ".txt", ".xlsx", ".xls") and p.resolve() != tax_path.resolve()
                and not p.name.startswith("."))
     sources, notes, fx_table = [], [], None
+    fx_sem_any = None
     all_context_samples = []
     np_rules = list(GENERIC_NP_RULES)
     reporting = "USD"
@@ -340,6 +365,21 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         lr = llm_roles(prof) if use_llm else None
         roles, rnotes, extra = _merge_roles(h, lr, prof)
         notes += [f"{p.name}: {n}" for n in rnotes]
+        # an amount already in the reporting currency beats converting a local amount
+        rc_amt = [c for c in df.columns if re.search(rf"(?i)({reporting}.*(amount|amt|value|spend|total))|"
+                                                     rf"((amount|amt|value|spend|total).*{reporting})", c)
+                  and prof[c]["num_rate"] > 0.9]
+        if rc_amt and roles.get("amount") != rc_amt[0]:
+            notes.append(f"{p.name}: using `{rc_amt[0]}` (already {reporting}) as amount instead of "
+                         f"`{roles.get('amount')}`; currency/rate columns dropped (CHECK)")
+            roles["amount"] = rc_amt[0]
+            roles.pop("currency", None)
+            roles.pop("fx_rate", None)
+        fx_sem = None
+        if "fx_rate" in roles and "currency" in roles:
+            fx_sem = _guess_rate_semantics(df, roles["currency"], roles["fx_rate"], reporting)
+            if fx_sem:
+                notes.append(f"{p.name}: `{roles['fx_rate']}` looks like {fx_sem} (CHECK fx.rate_semantics)")
         cols = {f: c for f, c in roles.items() if f != "record_id"}
         if extra["context"]:
             cols["context"] = extra["context"]
@@ -381,6 +421,8 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             all_context_samples += list(df[roles["description"]].astype(str).map(clean_text)
                                         .replace("", np.nan).dropna().sample(
                                             min(60, len(df)), random_state=0))
+        if fx_sem:
+            fx_sem_any = fx_sem
         sources.append(src)
     if not sources:
         raise ValueError("no transaction file found")
@@ -412,15 +454,16 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                 "second": {"vendor": "gemini", "model": "gemini-2.5-flash"},
                 "judge": {"vendor": "anthropic", "model": "claude-opus-5-5", "effort": "low"},
                 "fallbacks": [{"vendor": "gemini", "model": "gemini-2.5-flash"}],
-                "batch_size": 25, "concurrency": 6, "vote_threshold": 0.7,
+                "batch_size": 25, "concurrency": 6, "vote_threshold": 0.7, "second_max_units": 300,
+                "escalate_top_spend_share": 0.5, "escalate_max_units": 400,
                 "max_units": 20000, "cost_cap_usd": 8.0,
             },
             "embeddings": {"provider": "lsa", "gemini_model": "gemini-embedding-001", "dim": 256, "time_budget_sec": 120},
         },
         "output": {"template": "output_template.csv"},
     }
-    if fx_table:
-        cfg["fx"] = {**fx_table, "rate_semantics": "units_per_reporting",
+    if fx_table or fx_sem_any:
+        cfg["fx"] = {**(fx_table or {}), "rate_semantics": fx_sem_any or "units_per_reporting",
                      "ignore_rate_for_reporting_currency": True, "sanity_band": [0.33, 3.0]}
     if len(sources) > 1:
         notes.append("More than one transaction file: if they overlap, enable cross_source and set primary/secondary (CHECK)")

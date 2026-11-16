@@ -45,27 +45,38 @@ def add_scope_notes(tax, units: pd.DataFrame, cfg: dict, cache_dir: Path) -> int
     if notes is None:
         try:
             import anthropic
+            from concurrent.futures import ThreadPoolExecutor
             client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"],
                                          base_url=spec.get("base_url") or "https://api.anthropic.com",
-                                         max_retries=4)
-            schema = {"type": "object", "properties": {"notes": {"type": "array", "items": {
-                "type": "object", "properties": {"id": {"type": "string", "enum": leaves},
-                                                 "note": {"type": "string"}},
-                "required": ["id", "note"], "additionalProperties": False}}},
-                "required": ["notes"], "additionalProperties": False}
-            prompt = (
-                f"Company context: {ctx}\n\nThis is the company's procurement category tree (leaf ID: path):\n{tree}\n\n"
-                f"Here is a sample of the company's purchase lines (description | supplier | account):\n"
-                + "\n".join(lines) +
-                "\n\nFor EVERY leaf write one scope note (max 30 words) for a classifier: what belongs there, typical "
-                "items/services in this company's own vocabulary and abbreviations, and what distinguishes it from "
-                "its sibling leaves. Do not invent facts about suppliers.")
-            r = client.messages.create(model=spec.get("model", "claude-opus-5-5"), max_tokens=16000,
-                                       output_config={"effort": "medium",
-                                                      "format": {"type": "json_schema", "schema": schema}},
-                                       messages=[{"role": "user", "content": prompt}])
-            text = next(b.text for b in r.content if b.type == "text")
-            notes = {d["id"]: d["note"].strip() for d in json.loads(text)["notes"]}
+                                         max_retries=4, timeout=600.0)
+            head = (f"Company context: {ctx}\n\nThis is the company's procurement category tree (leaf ID: path):\n"
+                    f"{tree}\n\nHere is a sample of the company's purchase lines (description | supplier | account):\n"
+                    + "\n".join(lines))
+            chunk = 60   # big trees: several calls, each sees the whole tree but writes notes for <=60 leaves
+
+            def one(ids):
+                schema = {"type": "object", "properties": {"notes": {"type": "array", "items": {
+                    "type": "object", "properties": {"id": {"type": "string", "enum": ids},
+                                                     "note": {"type": "string"}},
+                    "required": ["id", "note"], "additionalProperties": False}}},
+                    "required": ["notes"], "additionalProperties": False}
+                prompt = (head + f"\n\nFor EVERY one of these leaves: {', '.join(ids)} - write one scope note "
+                          "(max 30 words) for a classifier: what belongs there, typical items/services in this "
+                          "company's own vocabulary and abbreviations, and what distinguishes it from its sibling "
+                          "leaves. Do not invent facts about suppliers.")
+                with client.messages.stream(
+                        model=spec.get("model", "claude-opus-5-5"), max_tokens=32000,
+                        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+                        messages=[{"role": "user", "content": prompt}]) as stream:
+                    msg = stream.get_final_message()
+                text = next(b.text for b in msg.content if b.type == "text")
+                return {d["id"]: d["note"].strip() for d in json.loads(text)["notes"]}
+
+            parts = [leaves[i:i + chunk] for i in range(0, len(leaves), chunk)]
+            notes = {}
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                for got in ex.map(one, parts):
+                    notes.update(got)
             store[key] = notes
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(store, indent=1))

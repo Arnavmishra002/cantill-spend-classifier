@@ -113,8 +113,11 @@ classification:
     fallbacks: [{vendor: gemini, model: gemini-2.5-flash}]
     batch_size: 25
     concurrency: 6
-    low_confidence_threshold: 0.5
+    low_confidence_threshold: 0.3   # measured: LLM beats supervised only below 0.3 on A2 simulation
     vote_threshold: 0.7
+    second_max_units: 300          # free-tier Gemini: capped, circuit breaker on quota
+    escalate_top_spend_share: 0.5  # units holding the top 50% of LLM-classified spend get an Opus read
+    escalate_max_units: 400
     max_units: 6000
     cost_cap_usd: 4.0
   # kNN hints use local LSA vectors; Gemini embeddings are opt-in (free-tier quota is too slow for bulk)

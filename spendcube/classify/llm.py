@@ -51,7 +51,7 @@ Rules:
 - Each line points to a supplier block `s` with the supplier name, its `profile` (the category that best describes the supplier's overall business with this company) and some of its `other_lines`.
 - When the description is blank or generic ("Product", "Parts", "No Object"), infer from the supplier block and the account.
 - Many companies categorise spend by the supplier's line of business or by the equipment fleet a part is for. When a line is ambiguous (a generic spare part, a repair, a service), prefer the supplier profile; override it when the line clearly belongs elsewhere.
-- `hints` (if present) are candidate categories from statistical models or similar labelled lines; use them as evidence, not as orders.
+- `hints` (if present) come from this company's labelled history: "model N0xx p0.42" is a statistical model's suggestion with its probability; "like '<text>' -> N0xx" is a similar labelled line and its category. Use them as evidence, not as orders.
 - confidence = your probability (0 to 1) that the chosen leaf is exactly right.
 
 Category tree (ID: L1 > L2 > ... > leaf){desc_note}:
@@ -422,12 +422,38 @@ class LLMClassifier:
         chain = [p for p in [self.primary, *self.fallbacks] if p and p.available()]
         remaining = items
         for prov in chain:
-            got = self._run_batches(prov, remaining, "supplier", instruction=instr)
-            res.update(got)
-            remaining = [it for it in remaining if it["uid"] not in res]
+            for attempt in range(2):
+                got = self._run_batches(prov, remaining, "supplier", instruction=instr)
+                res.update(got)
+                remaining = [it for it in remaining if it["uid"] not in res]
+                if not remaining or not prov.available():
+                    break
             if not remaining:
                 break
         return res
+
+    def escalate(self, items: list[dict], res: dict[str, dict]) -> int:
+        """Independent read by the judge model (Opus) for the highest-spend units.
+        Agree -> confidence up; disagree -> the stronger model's answer, capped confidence."""
+        if not (self.judge and self.judge.available() and items):
+            return 0
+        got = self._run_batches(self.judge, items, "escalate")
+        n = 0
+        for it in items:
+            u = it["uid"]
+            b = got.get(u)
+            if not b:
+                continue
+            a = res.get(u)
+            if a and a["node"] == b["node"]:
+                a["confidence"] = min(0.99, max(a["confidence"], b["confidence"]) + 0.05)
+                a["agree"] = True
+            else:
+                res[u] = {**b, "confidence": min(b["confidence"], 0.8), "escalated": True}
+                n += 1
+        self.stats["escalated_units"] = len(items)
+        self.stats["escalation_changed"] = n
+        return n
 
     def classify_units(self, items: list[dict], vote_threshold: float = 0.8) -> dict[str, dict]:
         """items: [{'uid', 'payload'}]. Returns uid -> {node, confidence, model, agree}."""
@@ -435,9 +461,12 @@ class LLMClassifier:
         chain = [p for p in [self.primary, *self.fallbacks] if p and p.available()]
         remaining = items
         for prov in chain:
-            got = self._run_batches(prov, remaining, "primary")
-            res.update(got)
-            remaining = [it for it in remaining if it["uid"] not in res]
+            for attempt in range(2):   # a model occasionally omits lines: retry those once
+                got = self._run_batches(prov, remaining, "primary")
+                res.update(got)
+                remaining = [it for it in remaining if it["uid"] not in res]
+                if not remaining or not prov.available():
+                    break
             if not remaining:
                 break
         # second opinion from the other vendor on uncertain units

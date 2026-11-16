@@ -244,8 +244,8 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                     j = lab_idx[li]
                     if j == qi or sc < 0.5:
                         continue
-                    knn_hint[qi].append(f"similar labelled line '{units.at[j, 'description'][:60]}' "
-                                        f"-> {leaf_ids[int(lab_dist[j].argmax())]}")
+                    knn_hint[qi].append(f"like '{units.at[j, 'description'][:40]}' -> "
+                                        f"{leaf_ids[int(lab_dist[j].argmax())]}")
         stats["dense_encoder"] = enc.mode
 
     # ---- layer 3: LLM
@@ -262,6 +262,9 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
             cand = cand[units["current"].values[cand]]
             # biggest spend first; cap the number of units sent
             cand = cand[np.argsort(-units["spend"].values[cand])][: int(lcfg.get("max_units", 20000))]
+            if lcfg.get("only_records"):  # evaluation only: units holding these records
+                keep_u = set(df.loc[df["record_id"].isin(set(lcfg["only_records"])), "unit_id"])
+                cand = cand[units["unit_id"].isin(keep_u).values[cand]]
             if lcfg.get("unit_sample"):  # evaluation only: random sample of units
                 us = lcfg["unit_sample"]
                 rng = np.random.default_rng(int(us.get("seed", 0)))
@@ -288,10 +291,9 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                 payload = {"line": _llm_line(r)}
                 hints = []
                 if p_sup is not None:
-                    top = np.argsort(-p_sup[i])[:3]
-                    hints += [f"model suggests {leaf_ids[t]} (p={p_sup[i, t]:.2f})" for t in top
-                              if p_sup[i, t] >= 0.1]
-                hints += knn_hint.get(i, [])[:3]
+                    top = np.argsort(-p_sup[i])[:2]
+                    hints += [f"model {leaf_ids[t]} p{p_sup[i, t]:.2f}" for t in top if p_sup[i, t] >= 0.15]
+                hints += knn_hint.get(i, [])[:2]
                 if hints:
                     payload["hints"] = hints
                 sk = r["supplier_key"]
@@ -301,12 +303,27 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                     src_txt = "labelled history" if pr.get("from") == "labels" else "conf"
                     gp["profile"] = (f"{pr['node']} ({tax.nodes[pr['node']].label}) "
                                      f"{src_txt} {pr['confidence']:.2f}")
-                sl = sup_lines.get(sk, [])[:6]
+                sl = sup_lines.get(sk, [])[:5]
                 if sl:
                     gp["other_lines"] = sl
                 items.append({"uid": r["unit_id"], "payload": payload, "group": sk, "group_payload": gp})
             log.info("LLM: %d units to classify", len(items))
             res = llm.classify_units(items, vote_threshold=float(lcfg.get("vote_threshold", 0.8)))
+            # spend-weighted scoring: the units holding most of the spend get a second,
+            # independent read by the strongest model
+            share = float(lcfg.get("escalate_top_spend_share", 0.0))
+            if share > 0 and items:
+                sp = units.set_index("unit_id")["spend"]
+                order_u = sorted(items, key=lambda it: -sp.get(it["uid"], 0.0))
+                tot = float(sum(sp.get(it["uid"], 0.0) for it in items)) or 1.0
+                pick, acc = [], 0.0
+                for it in order_u[: int(lcfg.get("escalate_max_units", 400))]:
+                    if acc / tot >= share:
+                        break
+                    pick.append(it)
+                    acc += sp.get(it["uid"], 0.0)
+                stats["escalation"] = {"units": len(pick), "spend_share": round(acc / tot, 3),
+                                       "changed": llm.escalate(pick, res)}
             uidx = pd.Series(range(U), index=units["unit_id"])
             for u, v in res.items():
                 i = uidx[u]
@@ -320,7 +337,8 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                 probs[i] = 0.0
                 probs[i, j] = 1.0
                 conf[i] = c_llm
-                source[i] = "llm_judge" if v.get("judged") else ("llm_agree" if v.get("agree") else "llm")
+                source[i] = ("llm_escalated" if v.get("escalated") else "llm_judge" if v.get("judged")
+                             else "llm_agree" if v.get("agree") else "llm")
             llm_stats = llm.summary()
     stats["llm"] = llm_stats
 
