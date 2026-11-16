@@ -82,7 +82,8 @@ DEFAULTS: dict[str, Any] = {
             "fallbacks": [{"vendor": "anthropic", "model": "claude-sonnet-5-5", "effort": "low"}],
             "primary_spend_share": 0.95,       # units holding the top 95% of spend go to the primary model
             "shortlist_above_leaves": 400,     # bigger trees: per-batch candidate shortlist, not the full tree
-            "shortlist_size": 30,
+            "shortlist_size": 25,
+            "shortlist_batch_cap": 150,
             "batch_size": 25,
             "concurrency": 10,
             "low_confidence_threshold": 0.5,   # labelled runs: LLM only below this supervised confidence
