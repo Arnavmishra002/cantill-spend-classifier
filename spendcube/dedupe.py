@@ -288,21 +288,24 @@ def dedupe_items(df: pd.DataFrame, cfg: dict, supplier_key: pd.Series, memory: d
                 uf.union("D:" + a, "D:" + b)
     root = nodes.map(uf.find)
     key = "I-" + root.map(lambda r: _h(r, 10))
-    if link is not None:
-        # inherit the primary record's item key when matched across systems
-        rid_to_key = pd.Series(key.values, index=df["record_id"].values)
-        linked = link.map(lambda r: rid_to_key.get(r) if r else None)
-        key = linked.where(linked.notna(), key)
+    # Learned from labels: when the client's golden item key is blank for lines without an
+    # item code, output blank for those lines too (they are "no item", not one item each).
+    blank_rule = bool(memory and memory.get("blank_item_without_code"))
     if memory:
         by_code = memory.get("item_by_code", {})
         by_desc = memory.get("item_by_desc", {})
         gold = code.map(by_code)
-        gold = gold.fillna(dn.where(~generic).map(by_desc))
+        if not blank_rule:
+            gold = gold.fillna(dn.where(~generic).map(by_desc))
         cl_gold = gold.groupby(root).agg(lambda s: s.dropna().mode().iloc[0] if s.notna().any() else None)
         gold = gold.fillna(root.map(cl_gold))
-        if link is not None:
-            rid_to_gold = pd.Series(gold.values, index=df["record_id"].values)
-            lg = link.map(lambda r: rid_to_gold.get(r) if r else None)
-            gold = gold.fillna(lg)
         key = gold.where(gold.notna(), key)
+    if blank_rule:
+        key = key.where(code != "", "")
+    if link is not None:
+        # a line matched to another record (cross-source duplicate, exported twice) takes
+        # that record's final item key, blank included
+        rid_to_key = pd.Series(key.values, index=df["record_id"].values)
+        linked = link.map(lambda r: rid_to_key.get(r) if r else None)
+        key = linked.where(linked.notna(), key)
     return key

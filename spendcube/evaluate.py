@@ -81,6 +81,18 @@ def bcubed(pred: pd.Series, gold: pd.Series) -> dict:
     return {"precision": round(prec, 4), "recall": round(rec, 4), "f1": round(f1, 4), "n": int(len(df))}
 
 
+def pairwise(pred: pd.Series, gold: pd.Series) -> dict:
+    """Pairwise precision/recall/F1 over all pairs of lines (a blank key is a group too)."""
+    df = pd.DataFrame({"p": pred.fillna("").values, "g": gold.fillna("").values})
+    c2 = lambda n: n * (n - 1) / 2  # noqa: E731
+    tp = float(c2(df.groupby(["p", "g"]).size()).sum())
+    pp = float(c2(df.groupby("p").size()).sum())
+    gp = float(c2(df.groupby("g").size()).sum())
+    prec, rec = tp / max(pp, 1), tp / max(gp, 1)
+    return {"precision": round(prec, 4), "recall": round(rec, 4),
+            "f1": round(2 * prec * rec / max(prec + rec, 1e-12), 4), "n": int(len(df))}
+
+
 def dedup_metrics(df: pd.DataFrame, labels: pd.DataFrame) -> dict | None:
     """Score supplier/item keys against golden keys (A). Tool rows matched to an ERP
     line on PO+amount (P1) borrow that line's golden key, which tests the spelling
@@ -103,7 +115,11 @@ def dedup_metrics(df: pd.DataFrame, labels: pd.DataFrame) -> dict | None:
     res["supplier_excl_largest_golden_bucket"] = bcubed(df.loc[ok2, "supplier_key"], gold_s[ok2])
     if gold_i is not None:
         oki = gold_i.notna() & (gold_i != "")
-        res["item"] = bcubed(df.loc[oki, "item_key"], gold_i[oki])
+        res["item_bcubed_nonblank_gold"] = bcubed(df.loc[oki, "item_key"], gold_i[oki])
+        lab_rows = df["record_id"].isin(lab.index)       # every labelled line, blank golden keys included
+        res["item_pairwise_all_labelled"] = pairwise(df.loc[lab_rows, "item_key"], gold_i[lab_rows])
+    lab_rows = df["record_id"].isin(lab.index)
+    res["supplier_pairwise_all_labelled"] = pairwise(df.loc[lab_rows, "supplier_key"], gold_s[lab_rows])
     return res
 
 
@@ -199,6 +215,7 @@ def evaluate(config: str, data: str, mode: str = "zero_shot", use_llm: bool = Tr
         res["fresh_rows"] = int(len(out))
         res["classification"] = score(out, labels, tax, fresh_ids)
         res["exclusions"] = exclusion_agreement(out, labels)
+        res["dedup"] = dedup_metrics(rep["_df"], labels)
         res["validation"] = rep["validation"]
     else:
         raise ValueError(mode)

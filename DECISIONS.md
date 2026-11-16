@@ -150,8 +150,15 @@ vendor ID (`supplier_id_global: true`). Without names, two IDs of the same real 
   purchases) never glue items together.
 * Generic texts ("No Object", "Parts", blank) cannot identify an item: key = supplier + code.
 * Tool lines that duplicate an ERP line inherit that line's item key; A learns `code → golden item` from labels.
-* The golden `item_key` is blank for lines without a material number; for those lines I still output a text-based key
-  (assumed to be ignored by the scorer).
+* Blank item keys, learned from the labels. In `labels_A.csv` 43% of ERP lines (15,816) have a blank golden
+  `item_key`, and they are exactly the lines without a material number: the client does not treat a free-text or
+  service line as an item. My first version gave those lines text-based keys. Scored pairwise over all labelled
+  lines (a blank key counts as one group, as a simple grouping check would treat it), item F1 was 0.10 (recall 0.05).
+  Options: keep text keys and assume blanks are ignored, or reproduce the client's convention. Chose: the tool
+  learns from the labels whether lines without an item code have a blank golden key (it does when at least 95% of
+  them do; in A it is 100%) and then outputs a blank `item_key` for lines without a code. Lines matched to another
+  record take that record's final key, blank included. Result on the A2 simulation: pairwise item F1 0.994,
+  B-cubed F1 on lines with a golden key 0.976. Without labels (C) the rule is off and every line gets a key.
 
 ## 5. Classification
 * **Unit of classification**: identical (normalised description, supplier, account, context, item code) lines are

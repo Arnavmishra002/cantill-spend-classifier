@@ -98,6 +98,12 @@ def build_memory(df: pd.DataFrame, labels: pd.DataFrame | None, supplier_names: 
             if k and k not in GENERIC_DESCRIPTIONS and vc.iloc[0] >= 0.95:
                 by_desc[k] = vc.index[0]
         mem["item_by_code"], mem["item_by_desc"] = by_code, by_desc
+    if "item_key" in m:
+        nocode = m["item_code"].fillna("").str.strip() == ""
+        if int(nocode.sum()) >= 50:
+            share = float((m.loc[nocode, "item_key"].fillna("") == "").mean())
+            mem["blank_item_share_without_code"] = round(share, 4)
+            mem["blank_item_without_code"] = share >= 0.95
     return mem
 
 
