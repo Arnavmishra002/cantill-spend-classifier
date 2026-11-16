@@ -130,6 +130,7 @@ def run(config_path: str, data_dir: str, out_path: str, *, use_llm: bool = True,
     mem_src = train_df if train_df is not None else df
     memory = clf.build_memory(mem_src, labels, mem_src["supplier_name"]) if labels is not None else {}
     df["supplier_key"] = dedupe_suppliers(df, cfg, memory)
+    report["supplier_hubs"] = dict(df["supplier_key"].attrs.get("hub_stats", {}))
     if train_df is not None:
         train_df["supplier_key"] = dedupe_suppliers(train_df, cfg, memory)
     # matching compares real suppliers, so it uses the name/id clusters *before* golden

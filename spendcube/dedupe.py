@@ -107,33 +107,72 @@ def dedupe_suppliers(df: pd.DataFrame, cfg: dict, memory: dict | None = None) ->
     norm = {n: supplier_norm(n, suffixes) for n in uniq_names}
     comp = {n: norm[n].replace(" ", "") for n in uniq_names}
     df_ck = names.map(comp)
+    scope = df["source"] if not scfg.get("supplier_id_global", False) else ""
+    idk = (scope + "|" + ids).where(ids != "", "")
+
+    # ---- hubs: a generic name used with many supplier ids ("SUNDRY", "ONE TIME VENDOR",
+    # "TAX OFFICE", "CASH"), or one id / tax id used with many unrelated names. Merging
+    # through a hub would chain many real suppliers into one key, so hubs never link.
+    max_ids = int(scfg.get("hub_max_ids_per_name", 3))
+    max_names = int(scfg.get("hub_max_names_per_id", 3))
+    pairs = pd.DataFrame({"ck": df_ck, "id": idk})
+    pairs = pairs[(pairs["ck"] != "") & (pairs["id"] != "")].drop_duplicates()
+    ids_per_name = pairs.groupby("ck")["id"].nunique()
+    hub_names = set(ids_per_name[ids_per_name > max_ids].index)
+
+    def unrelated(names_: list[str]) -> bool:
+        """True when the names are not spellings of one firm (most differ from the most common)."""
+        ref = names_[0]
+        similar = sum(1 for n in names_[1:] if fuzz.ratio(ref, n) >= 85 or fuzz.token_set_ratio(ref, n) >= 90)
+        return similar < 0.5 * (len(names_) - 1)
+
+    def hub_keys(key_series: pd.Series) -> set:
+        pr = pd.DataFrame({"ck": df_ck, "k": key_series})
+        pr = pr[(pr["ck"] != "") & (pr["k"] != "") & ~pr["ck"].isin(hub_names)]
+        out = set()
+        for k, g in pr.groupby("k")["ck"]:
+            vc = g.value_counts()
+            if len(vc) > max_names and unrelated(list(vc.index)):
+                out.add(k)
+        return out
+    hub_ids = hub_keys(idk) if scfg.get("use_supplier_id", True) else set()
+    hub_tax = hub_keys(taxid) if (taxid != "").any() else set()
+    if hub_names or hub_ids or hub_tax:
+        log.warning("supplier hubs kept apart (not used to merge): %d names linked to >%d ids, %d ids and %d "
+                    "tax ids linked to >%d unrelated names; e.g. %s", len(hub_names), max_ids, len(hub_ids),
+                    len(hub_tax), max_names, sorted(hub_names)[:3] + sorted(hub_ids)[:3])
+    self_stats = {"hub_names": len(hub_names), "hub_ids": len(hub_ids), "hub_tax_ids": len(hub_tax)}
 
     uf = UnionFind()
-    # node per compact name; lines with no name use their id (or a single unknown node)
+    # node per compact name; a hub name is split by its id; lines with no name use their id
     node = pd.Series("N:" + df_ck, index=df.index)
+    at_hub = df_ck.isin(hub_names) & (idk != "")
+    node[at_hub] = "I:" + idk[at_hub]
     noname = df_ck == ""
-    node[noname] = "I:" + ids[noname]
-    node[noname & (ids == "")] = "UNKNOWN"
+    node[noname] = "I:" + idk[noname]
+    node[noname & (idk == "")] = "UNKNOWN"
     for n in node.unique():
         uf.find(n)
     if scfg.get("use_supplier_id", True):
-        # same supplier id -> same supplier (ids are per source system, so prefix source
-        # unless the config says ids are global)
-        scope = df["source"] if not scfg.get("supplier_id_global", False) else ""
-        idk = (scope + "|" + ids).where(ids != "")
-        for _, g in node.groupby(idk.values):
+        # same supplier id -> same supplier (ids are per source system unless the
+        # config says they are global), except through hub ids
+        for k, g in node.groupby(idk.values):
+            if not k or k in hub_ids:
+                continue
             vals = list(pd.unique(g))
             for v in vals[1:]:
                 uf.union(vals[0], v)
     if (taxid != "").any():
-        for _, g in node.groupby(taxid.where(taxid != "").values):
+        for k, g in node.groupby(taxid.values):
+            if not k or k in hub_tax:
+                continue
             vals = list(pd.unique(g))
             for v in vals[1:]:
                 uf.union(vals[0], v)
 
     # fuzzy name matching with blocking on first 3 chars of compact key and on
-    # first token; compare each name only within its blocks
-    ck_list = sorted({c for c in comp.values() if c})
+    # first token; compare each name only within its blocks (hub names excluded)
+    ck_list = sorted({c for c in comp.values() if c and c not in hub_names})
     norm_of_ck = {}
     for n, c in comp.items():
         if c:
@@ -173,6 +212,7 @@ def dedupe_suppliers(df: pd.DataFrame, cfg: dict, memory: dict | None = None) ->
         cl_gold = gold.groupby(root).agg(lambda s: s.dropna().mode().iloc[0] if s.notna().any() else None)
         gold = gold.fillna(root.map(cl_gold))
         key = gold.where(gold.notna(), key)
+    key.attrs["hub_stats"] = self_stats
     return key
 
 

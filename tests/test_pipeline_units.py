@@ -251,3 +251,34 @@ def test_taxonomy_parent_child_and_depth():
     assert tax.max_depth == 4
     assert {tax.nodes[n].name for n in tax.leaves} == {"D", "E"}
     assert tax.node_for_labels(["A", "B", "E", ""]) == tax.by_path[("A", "B", "E")]
+
+
+def test_supplier_hubs_do_not_chain_suppliers():
+    # a generic name used with many ids, and one id used with many unrelated names
+    firms = ["Alpha Engineering", "Beta Hydraulics", "Gamma Mining Supplies", "Delta Electrical",
+             "Epsilon Filters", "Zeta Bearings"]
+    rows = []
+    for i, f in enumerate(firms):
+        rows.append({"supplier_name": f, "supplier_id": f"V{i}"})
+        rows.append({"supplier_name": "SUNDRY VENDOR", "supplier_id": f"V{i}"})   # hub name
+    for f in ["Tax Office", "Water Board", "Municipality Rates", "Courier Express", "Cash Payee"]:
+        rows.append({"supplier_name": f, "supplier_id": "V999"})                   # hub id
+    df = pd.DataFrame(rows)
+    df["source"] = "s"
+    k = dedupe_suppliers(df, DEFAULTS)
+    named = k[df["supplier_name"].isin(firms)]
+    assert named.nunique() == len(firms)                      # not chained into one key
+    # each sundry line joins the real firm that owns its id
+    for i, f in enumerate(firms):
+        same_id = k[df["supplier_id"] == f"V{i}"]
+        assert same_id.nunique() == 1
+    hub_id_rows = k[df["supplier_id"] == "V999"]
+    assert hub_id_rows.nunique() == 5                         # unrelated names stay apart
+    assert k.attrs["hub_stats"] == {"hub_names": 1, "hub_ids": 1, "hub_tax_ids": 0}
+
+
+def test_supplier_with_few_ids_still_merges():
+    df = pd.DataFrame({"source": "s", "supplier_name": ["Acme Ltd", "ACME LIMITED", "Acme Ltd"],
+                       "supplier_id": ["V1", "V2", "V3"]})
+    k = dedupe_suppliers(df, DEFAULTS)
+    assert k.nunique() == 1
