@@ -505,7 +505,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                    "item": {"use_item_code": True, "fuzzy_threshold": 95}},
         "classification": {
             "company_context": ctx or "TODO: one or two sentences on the industry and what it buys",
-            "consistency": {"group_fields": consistency_groups, "strong": 0.85, "weak": 0.7, "share": 0.7},
+            "consistency": {"group_fields": consistency_groups, "strong": 0.8, "weak": 0.7, "share": 0.7},
             "labels": None,
             # Claude only, same keys as the defaults in spendcube/config.py
             "llm": copy.deepcopy(DEFAULTS["classification"]["llm"]),

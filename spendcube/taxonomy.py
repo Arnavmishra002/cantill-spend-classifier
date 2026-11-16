@@ -25,6 +25,7 @@ class Node:
     depth: int                     # 1-based
     children: list[str] = field(default_factory=list)
     description: str = ""
+    general: bool = False          # the general bucket among its siblings (see Taxonomy._mark_general)
 
     @property
     def name(self) -> str:
@@ -41,6 +42,35 @@ class Taxonomy:
         self.max_depth = max_depth
         self.by_path = {n.path: n.id for n in nodes.values()}
         self.leaves = [n.id for n in nodes.values() if not n.children]
+        self._mark_general()
+
+    def _mark_general(self):
+        """Among siblings, a leaf that repeats its parent's name ('Pumps > Pumps') or is
+        named Other / General / Miscellaneous / Unclassified is the branch's general bucket.
+        Trees padded to a fixed depth use it for spend that is not clearly a specific leaf."""
+        def norm(x):
+            return re.sub(r"[^a-z0-9]", "", x.lower())
+        rx = re.compile(r"(?i)\b(other|others|general|misc|miscellaneous|unclassified|various|sundry|not elsewhere)\b")
+        for parent in self.nodes.values():
+            kids = [self.nodes[c] for c in parent.children]
+            if len(kids) < 2:
+                continue
+            same = [k for k in kids if not k.children and norm(k.name) == norm(parent.name)]
+            other = [k for k in kids if not k.children and rx.search(k.name)]
+            pick = same[:1] or (other if len(other) == 1 else [])
+            for k in pick:
+                k.general = True
+
+    def general_sibling(self, nid: str) -> str | None:
+        """The general leaf of nid's branch, if nid is a specific leaf in such a branch."""
+        n = self.nodes[nid]
+        if n.general or n.depth < 2:
+            return None
+        parent = self.nodes[self.by_path[n.path[:-1]]]
+        for c in parent.children:
+            if self.nodes[c].general:
+                return c
+        return None
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -84,6 +114,11 @@ class Taxonomy:
                 return self.by_path[p]
             p = p[:-1]
         return None
+
+    def display_path(self, nid: str) -> str:
+        """Full path for prompts; a general leaf is marked so a model can see its role."""
+        n = self.nodes[nid]
+        return " > ".join(n.path) + (" [general]" if n.general else "")
 
     def leaf_text(self, nid: str) -> str:
         """Retrieval text: de-duplicated path + description."""

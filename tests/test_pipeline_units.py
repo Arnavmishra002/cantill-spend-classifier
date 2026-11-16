@@ -282,3 +282,14 @@ def test_supplier_with_few_ids_still_merges():
                        "supplier_id": ["V1", "V2", "V3"]})
     k = dedupe_suppliers(df, DEFAULTS)
     assert k.nunique() == 1
+
+
+def test_general_leaf_detection():
+    tax = Taxonomy.from_paths([("Eq", "Pumps", "Pumps"), ("Eq", "Pumps", "Pump Spares"),
+                               ("Eq", "Fans", "Fan Spares"), ("Eq", "Fans", "Other Fans"),
+                               ("Eq", "Belts", "Belts")])
+    gen = {tax.nodes[n].path for n in tax.leaves if tax.nodes[n].general}
+    assert gen == {("Eq", "Pumps", "Pumps"), ("Eq", "Fans", "Other Fans")}   # single-leaf branch is not
+    spares = tax.by_path[("Eq", "Pumps", "Pump Spares")]
+    assert tax.general_sibling(spares) == tax.by_path[("Eq", "Pumps", "Pumps")]
+    assert tax.display_path(tax.by_path[("Eq", "Pumps", "Pumps")]).endswith("[general]")

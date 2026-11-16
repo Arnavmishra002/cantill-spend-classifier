@@ -350,6 +350,18 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                 conf[i] = c_llm
                 source[i] = "llm_judge" if v.get("judged") else ("llm_agree" if v.get("agree") else "llm")
             llm_stats = llm.summary()
+            # an unsure pick of a specific leaf falls back to its branch's general leaf
+            gthr = float(ccfg.get("general_fallback_below", 0.5))
+            n_gen = 0
+            if gthr > 0:
+                for i in np.where(np.char.startswith(source.astype(str), "llm") & (conf < gthr))[0]:
+                    g = tax.general_sibling(leaf_ids[int(probs[i].argmax())])
+                    if g:
+                        probs[i] = 0.0
+                        probs[i, col[g]] = 1.0
+                        source[i] = source[i] + "+general"
+                        n_gen += 1
+            stats["general_fallback_units"] = n_gen
     stats["llm"] = llm_stats
 
     # ---- layer 4: offline zero-shot for whatever is still unclassified
@@ -439,7 +451,7 @@ def _consistency_pass(df: pd.DataFrame, ccfg: dict) -> dict:
     c = ccfg.get("consistency", {}) or {}
     if c.get("enabled", True) is False:
         return {}
-    hi, lo, share_min = float(c.get("strong", 0.85)), float(c.get("weak", 0.7)), float(c.get("share", 0.7))
+    hi, lo, share_min = float(c.get("strong", 0.8)), float(c.get("weak", 0.7)), float(c.get("share", 0.7))
     min_strong = int(c.get("min_strong_lines", 3))
     fields = ["supplier_key"] + list(c.get("group_fields", []) or [])
     stats = {}

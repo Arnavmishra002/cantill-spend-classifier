@@ -100,7 +100,7 @@ classification:
   text_fields: [description, supplier_name, context]
   consistency:            # low-confidence lines follow their supplier's / contract's confident lines
     group_fields: [contract_number]
-    strong: 0.85
+    strong: 0.8
     weak: 0.7
     share: 0.7
   labels:

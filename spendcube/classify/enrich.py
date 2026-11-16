@@ -36,9 +36,9 @@ def add_scope_notes(tax, units: pd.DataFrame, cfg: dict, cache_dir: Path) -> int
     sample = pd.concat([top, rest])
     lines = [f"{r.description[:80]} | {r.supplier_name[:40]}" + (f" | {r.gl_description[:30]}" if r.gl_description else "")
              for r in sample.itertuples(index=False)]
-    tree = "\n".join(f"{n}: {' > '.join(dict.fromkeys(tax.nodes[n].path))}" for n in leaves)
+    tree = "\n".join(f"{n}: {tax.display_path(n)}" for n in leaves)
     ctx = cfg.get("classification", {}).get("company_context") or "not given"
-    key = hashlib.sha256(f"notes-v1|{spec.get('model')}|{ctx}|{tree}|{json.dumps(lines)}".encode()).hexdigest()
+    key = hashlib.sha256(f"notes-v2|{spec.get('model')}|{ctx}|{tree}|{json.dumps(lines)}".encode()).hexdigest()
     cache = Path(cache_dir) / "scope_notes.json"
     store = json.loads(cache.read_text()) if cache.exists() else {}
     notes = store.get(key)
@@ -63,7 +63,9 @@ def add_scope_notes(tax, units: pd.DataFrame, cfg: dict, cache_dir: Path) -> int
                 prompt = (head + f"\n\nFor EVERY one of these leaves: {', '.join(ids)} - write one scope note "
                           "(max 30 words) for a classifier: what belongs there, typical items/services in this "
                           "company's own vocabulary and abbreviations, and what distinguishes it from its sibling "
-                          "leaves. Do not invent facts about suppliers.")
+                          "leaves. A leaf marked [general] is the general bucket of its branch: say that it takes the "
+                          "branch's spend that does not clearly name one of the specific sibling leaves. Do not invent "
+                          "facts about suppliers.")
                 with client.messages.stream(
                         model=spec.get("model", "claude-opus-5-5"), max_tokens=32000,
                         output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},

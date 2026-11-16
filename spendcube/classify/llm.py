@@ -31,7 +31,7 @@ from ..config import DEFAULTS
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "v5"
+PROMPT_VERSION = "v6"
 
 # USD per 1M tokens (input, output, cache read). Override in config llm.prices.
 DEFAULT_PRICES = {
@@ -53,6 +53,7 @@ Rules:
 - Many companies categorise spend by the supplier's line of business or by the equipment fleet a part is for. When a line is ambiguous (a generic spare part, a repair, a service), prefer the supplier profile; override it when the line clearly belongs elsewhere.
 - `hints` (if present) come from this company's labelled history: "model N0xx p0.42" is a statistical model's suggestion with its probability; "like '<text>' -> N0xx" is a similar labelled line and its category. Use them as evidence, not as orders.
 - `candidates` (if present) are the answers of two other analysts who disagreed; pick the better one unless both are clearly wrong.
+- A leaf marked [general] is the general bucket of its branch (it repeats the branch name, or is named Other, General or similar). Companies file most of a branch's spend there and use the specific sibling leaves only when the line clearly names that specific category. When a line belongs to the branch but does not clearly name one of the specific leaves, choose the [general] leaf.
 - confidence = your probability (0 to 1) that the chosen leaf is exactly right.
 
 Category tree (ID: L1 > L2 > ... > leaf){desc_note}:
@@ -220,7 +221,7 @@ def tree_block(tax, leaf_ids) -> tuple[str, str]:
     has_desc = False
     for nid in leaf_ids:
         n = tax.nodes[nid]
-        path = " > ".join(dict.fromkeys(n.path))
+        path = tax.display_path(nid)
         if n.description:
             has_desc = True
             lines.append(f"{nid}: {path} [{n.description}]")
