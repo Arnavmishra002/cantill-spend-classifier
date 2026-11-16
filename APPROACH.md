@@ -34,7 +34,7 @@ an invoice number counts as no evidence and gets low confidence.
 California L4: 56.4% by line, 59.6% by log spend; offline on 2,000 lines it was 33.6%. The top 1% of California
 lines hold 94% of spend, so plain spend weighting would rest on a few lines. Data: Purchase Order Data, California
 Department of General Services, data.ca.gov ("No Restrictions on Public Use"); `scripts/california_check.py`.
-Lines below confidence 0.7 form a review queue printed with every run: 3.7% of spend on A's build output, 48% on
+Lines below confidence 0.7 form a review queue printed with every run: 3.7% of spend on A's build output, 49% on
 B's (mostly lines without a description) and 1.7% on the California run; C's share is in its run summary. Every
 included line gets a leaf, so coverage at level 2 or deeper is 100% of spend. Exclusions agree 100% with B's 3,000 seeds. Suppliers on A without labels: precision and recall 1.00. Items on the
 A2 simulation: pairwise F1 0.994.
@@ -43,7 +43,7 @@ A2 simulation: pairwise F1 0.994.
 | Run | lines | units | time | cost | per 1,000 lines |
 |---|---:|---:|---:|---:|---:|
 | A, labels hidden, repetitive text | 65,549 | 8,483 | 8.6 min | $7.97 | $0.19 |
-| B build output | 41,028 | 15,100 | 11.7 min | $13.87 | $0.34 |
+| B build output | 41,028 | 17,737 | 6.2 min | $8.18 | $0.20 |
 | California, mostly unique text | 5,000 | 4,528 | 2.3 min | $5.94 | $1.19 |
 | Offline only | 25,362 | | 4 s | $0 | $0 |
 

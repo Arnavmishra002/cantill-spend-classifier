@@ -58,7 +58,7 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     (59 lines). A rate on the inverse base is detected by comparing both readings and is inverted. A rate that
     matches the table for any month from the invoice date to the posting date is accepted, because a line can be
     booked at the posting month and a high-inflation currency such as ARS can move more than three times in that
-    span. This changed one B line by 0.10 USD after the build output was committed.
+    span.
 17. The FX month is the invoice month, as the brief says. The posting month is used instead when the invoice date
     is missing, impossible, more than 120 days after posting or more than 1,100 days before it. A line's own rate is
     used when it passes the check in item 16. Otherwise the client's table gives the rate for that month, or for
@@ -146,10 +146,15 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     of its branch. Claude sees the supplier and account, and item 33 applies.
 39. Review queue and coverage. Included lines below confidence 0.7 (`classification.review_below`) are counted in
     the run summary and the report with their share of spend. On A's build output that is 2.9% of lines and 3.7%
-    of spend; on B's, 64% of lines and 48% of spend, mostly lines without a description; on the 5,000 California
+    of spend; on B's, 70% of lines and 49% of spend, mostly lines without a description or with vague text; on the 5,000 California
     lines, 35% of lines and 1.7% of spend. On B's seeds Claude's confidence matches its accuracy (0.88 against
     0.89). Coverage, the share of spend classified to level 2 or deeper, is 100% because every included line gets
     a leaf.
-40. Runtime and cost at C size. Units, not lines, drive cost. A's 65,549 lines collapse to 8,483 units; 5,000
+40. Rebuilding the outputs. A and B were rebuilt with the final code on 16 November. Exclusions, spend, supplier
+    and item keys did not change, except one ARS line (item 16). On B, l1 to l3 changed on 6,271 included lines
+    (6.4% of spend); their confidence had a median of 0.25 in both runs and none was at 0.8 or more in both, so
+    the changes sit in the review queue. Claude gives no temperature control, so uncertain lines can move between
+    runs; the disk cache makes a re-run on the same machine repeat its answers.
+41. Runtime and cost at C size. Units, not lines, drive cost. A's 65,549 lines collapse to 8,483 units; 5,000
     California lines are 4,528 units. That run took 137 s and 5.94 USD with 57 units on Opus and 4,471 on Sonnet;
     the 6 USD cap trimmed only second opinions. Drafted C configs use concurrency 16 and a 60 USD cap.
