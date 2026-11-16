@@ -74,7 +74,10 @@ def run(config_path: str, data_dir: str, out_path: str, *, use_llm: bool = True,
     df["supplier_key"] = dedupe_suppliers(df, cfg, memory)
     if train_df is not None:
         train_df["supplier_key"] = dedupe_suppliers(train_df, cfg, memory)
-    match_stats = match_sources(df, cfg, supplier_key=df["supplier_key"])
+    # matching compares real suppliers, so it uses the name/id clusters *before* golden
+    # keys are applied (a client's catch-all golden key must not make two firms "the same")
+    match_key = dedupe_suppliers(df, cfg, None) if memory else df["supplier_key"]
+    match_stats = match_sources(df, cfg, supplier_key=match_key)
     resolve_codes(df, cfg)
     link = df["matched_to"] if "matched_to" in df.columns else None
     df["item_key"] = dedupe_items(df, cfg, df["supplier_key"], memory, link=link)

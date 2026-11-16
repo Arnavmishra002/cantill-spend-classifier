@@ -98,6 +98,11 @@ classification:
     vehicles), spares, overhauls and repairs, roof support consumables (bolts, resin, mesh),
     explosives, stone dust, conveyor and ventilation services.
   text_fields: [description, supplier_name, context]
+  consistency:            # low-confidence lines follow their supplier's / contract's confident lines
+    group_fields: [contract_number]
+    strong: 0.85
+    weak: 0.7
+    share: 0.7
   labels:
     file: labels_A.csv
     training_data_dir: data/company_A
@@ -118,7 +123,7 @@ classification:
     second_max_units: 300          # free-tier Gemini: capped, circuit breaker on quota
     escalate_top_spend_share: 0.5  # units holding the top 50% of LLM-classified spend get an Opus read
     escalate_max_units: 400
-    max_units: 6000
+    max_units: 20000
     cost_cap_usd: 4.0
   # kNN hints use local LSA vectors; Gemini embeddings are opt-in (free-tier quota is too slow for bulk)
   embeddings: {provider: lsa, gemini_model: gemini-embedding-001, dim: 256, time_budget_sec: 120}

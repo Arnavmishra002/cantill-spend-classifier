@@ -157,9 +157,9 @@ vendor ID (`supplier_id_global: true`). Without names, two IDs of the same real 
 * **Unit of classification**: identical (normalised description, supplier, account, context, item code) lines are
   classified once (A: 42k lines → 7.6k units; B: 38k → 17.7k).
 * **Layers** (first confident one wins): memory of labels → supervised TF-IDF + logistic regression (A/B only) →
-  LLM → offline retrieval + propagation. Threshold for calling the LLM in labelled runs: supervised confidence < 0.5.
-  Measured on held-out suppliers, supervised predictions at ≥0.5 confidence were ~99% right and below 0.5 ~20% right
-  (A and B both), so 0.5 is where the LLM adds value.
+  LLM → offline retrieval + propagation → group consistency. In labelled runs the LLM is called only below a
+  supervised-confidence threshold (A 0.3, B 0.5; see 5.1). On held-out suppliers, supervised predictions at ≥0.5
+  confidence were ~99% right and below 0.5 ~20% right (A and B both).
 * **Unseen tree (C)**: the LLM gets the whole tree (leaf IDs + paths) in a cached system prompt, plus per-leaf scope
   notes written once per tree by Claude Opus from the tree and a sample of the company's own **unlabelled** lines, plus
   per-supplier context. The JSON schema allows only valid leaf IDs, so an invalid category is impossible.
@@ -170,15 +170,33 @@ vendor ID (`supplier_id_global: true`). Without names, two IDs of the same real 
 * **Temperature 0**: current Claude models reject sampling parameters, so determinism comes from the on-disk cache
   keyed by a hash of (model, prompt version, tree, line payload). Gemini is called with temperature 0.
 * **Item codes are not shown to the LLM** (they are opaque IDs) so identical lines share one LLM decision.
+* **Matching uses name clusters, not golden keys.** For A the output supplier key comes from the client's golden
+  keys, but the "same supplier" test inside matching uses the generic name/id clusters, so the client's catch-all key
+  can never make two different firms look like one supplier.
 * **B seed labels are "useful, not perfect"**: they train the supervised layer with a quality factor of 0.92 on
   memory confidence, and they are the yardstick for B metrics (so B numbers inherit their noise).
+
+### 5.1 Decisions made from measurements (not taste)
+| Question | Options | Choice | Evidence |
+|---|---|---|---|
+| When to call the LLM in labelled runs | always / below a supervised-confidence threshold | A: < 0.3, B: < 0.5 | A2 simulation: LLM beats supervised only below 0.3 (56% vs 17% L3); B2 simulation: LLM lifts L3 82% → 91% (line) at 0.5 |
+| Supplier profiles | none / from labels / from LLM | labels when the supplier has labels, else LLM | A zero-shot sample: L1 78% → 85% |
+| Per-leaf scope notes for an unseen tree | none / generated once per tree | generated (Opus, from tree + unlabelled sample) | A zero-shot sample: L1 85% → 90%, L3 67% → 74% (line) |
+| Opus vs Sonnet as the bulk classifier | Sonnet / Opus | Sonnet bulk, Opus for the top-spend units and as judge | Opus +1–3 pts on a sample at 2× cost and it skipped lines; the spend-weighted score is driven by few big units, so those get the extra read |
+| Gemini (free tier) | bulk second opinion / limited | limited: ≤300 least-certain units per run, circuit breaker | quota errors after a few calls; decided with the owner |
+| Embeddings for kNN hints | Gemini / local LSA | local LSA by default | Gemini free tier embedded ~800 vectors in 6 min |
+| Group consistency | off / supplier / supplier + contract | supplier always, plus contract-like fields named in config | A zero-shot: L3 57% → 63% (line), 70% → 71% (spend); neutral on A2/B2 simulations |
+
+### 5.2 Fresh-drop assumption (A2/B2)
+I assume a new drop is self-contained: a tool invoice in A2 duplicates an ERP receipt in A2, not one from A.
+Tool lines are therefore matched only within the drop. The A2 simulation splits by PO number for the same reason.
 
 ## 6. LLM use, cost and robustness
 * Primary: Claude Sonnet 5.5 (effort low) for supplier profiles and lines. Judge: Claude Opus 5.5 for scope notes,
   column mapping in `init-config`, and lines where the two vendors disagree. Second opinion / failover: Gemini 2.5
   Flash. The key in this project is free tier: it hits quota after a few calls, so it votes on at most 400 of the
   least certain units and a circuit breaker switches it off for the run on repeated quota errors (decided with the
-  owner). Embeddings for kNN hints use Gemini when available, otherwise LSA (TF-IDF + SVD).
+  owner). kNN hints use local LSA vectors (TF-IDF + SVD) indexed with FAISS; Gemini embeddings are opt-in.
 * Batching (25 lines per request, lines of one supplier together, supplier context sent once), prompt caching for
   the tree, disk cache, retries with backoff, a per-run USD cap (`cost_cap_usd`), and an offline fallback: with no key
   or after the cap, lines get retrieval + propagation and the run still writes a valid file.
@@ -192,9 +210,22 @@ included + excluded spend = total input spend. Any failure stops the run with a 
 An `_audit.csv` (rule, matched record, flags, FX source, classification layer) and a `_report.json` sit next to each
 output.
 
+## 7b. Single-file companies (C): duplicates
+With one invoice file there is no second system, but the A tool file shows how duplicates look in practice: the
+same invoice line exported twice with different formatting. Drafted configs therefore enable `duplicates.fuzzy`:
+same normalised invoice number (+ line number when the file has one) + same net amount + same quantity + text
+similarity ≥ 90 (+ similar supplier) → later copies are `DUPLICATE`. Exact copies are always duplicates. On a
+disguised copy of A's tool file this flags 2,095 lines, against ~2,350 copies expected from the cluster analysis.
+
 ## 8. Assumptions for the blind test
 * A2/B2 use the same layouts; file names may differ slightly (configs accept glob patterns). The tree, labels and FX
   table are taken from the A2/B2 folder if present, else from the original kit folder (`search_dirs`).
 * For A2/B2 the labelled A/B data is loaded as training rows only (never output).
 * C: one invoice-line file + tree (≤4 levels), no labels, reporting currency USD (brief §4). `init-config` drafts the
-  config; I review it (config only), run, validate, and push.
+  config (LLM-assisted column mapping, validated against parse rates; status map; tax/intercompany/finance
+  patterns; suspicious GL accounts; FX direction; company context); `check-config` shows parse rates per field; I
+  review it (config only), run, validate, and push.
+* If C has amounts in several currencies but neither a rate column nor an FX table, conversion is impossible: those
+  lines get spend 0 and the flag `NO_FX_RATE`, and `init-config` warns. If C has an amount column already in USD,
+  it is used directly.
+* If C's tree file carries descriptions, they replace the generated scope notes.

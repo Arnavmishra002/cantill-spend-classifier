@@ -230,3 +230,24 @@ def test_validation_catches_bad_category_and_duplicate_ids():
     wrong.loc[1, "spend"] = 5.0
     with pytest.raises(ValidationError):
         validate_output(wrong, df, tax, OUTPUT_COLUMNS, 2)
+
+
+# ------------------------------------------------------------------ reading
+def test_read_table_title_rows_and_semicolons(tmp_path):
+    from spendcube.ingest import read_table
+    p = tmp_path / "x.csv"
+    p.write_text('AP export\nGenerated 2025-01-01\nLine ID,Vendor,Amount\n1,A,"1,000.50"\n2,B,20\n')
+    t = read_table(p)
+    assert list(t.columns) == ["Line ID", "Vendor", "Amount"] and len(t) == 2
+    q = tmp_path / "y.csv"
+    q.write_text("Line ID;Vendor;Amount\n1;A;1.000,50\n2;B;20\n")
+    t = read_table(q)
+    assert list(t.columns) == ["Line ID", "Vendor", "Amount"]
+    assert parse_number(t.loc[0, "Amount"]) == pytest.approx(1000.5)
+
+
+def test_taxonomy_parent_child_and_depth():
+    tax = Taxonomy.from_paths([("A", "B", "C", "D"), ("A", "B", "E")])
+    assert tax.max_depth == 4
+    assert {tax.nodes[n].name for n in tax.leaves} == {"D", "E"}
+    assert tax.node_for_labels(["A", "B", "E", ""]) == tax.by_path[("A", "B", "E")]

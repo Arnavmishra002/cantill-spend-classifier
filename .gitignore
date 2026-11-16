@@ -35,3 +35,6 @@ venv/
 .claude/
 .idea/
 .vscode/
+
+# Personal interview prep (not part of the submission)
+INTERVIEW_CHEATSHEET.md

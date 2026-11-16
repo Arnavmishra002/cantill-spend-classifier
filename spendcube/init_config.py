@@ -335,6 +335,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                and not p.name.startswith("."))
     sources, notes, fx_table = [], [], None
     fx_sem_any = None
+    consistency_groups: list[str] = []
     all_context_samples = []
     np_rules = list(GENERIC_NP_RULES)
     reporting = "USD"
@@ -383,6 +384,12 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         cols = {f: c for f, c in roles.items() if f != "record_id"}
         if extra["context"]:
             cols["context"] = extra["context"]
+        groups = [c for c in df.columns if re.search(r"(?i)contract|agreement", c) and c not in roles.values()
+                  and 1 < prof[c]["nunique"] < 0.5 * max(len(df), 1)]
+        if groups:
+            consistency_groups.extend(groups[:2])
+            notes.append(f"{p.name}: {groups[:2]} used as consistency groups (lines on one contract tend to "
+                         f"share a category) (CHECK)")
         name = re.sub(r"[^a-z0-9]+", "_", p.stem.lower()).strip("_") or f"src{i}"
         src = {"name": name, "file": [p.name, re.sub(r"\d+", "*", p.stem) + p.suffix],
                "record_id": {"column": roles.get("record_id", df.columns[0])},
@@ -447,6 +454,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                    "item": {"use_item_code": True, "fuzzy_threshold": 95}},
         "classification": {
             "company_context": ctx or "TODO: one or two sentences on the industry and what it buys",
+            "consistency": {"group_fields": consistency_groups, "strong": 0.85, "weak": 0.7, "share": 0.7},
             "labels": None,
             "llm": {
                 "enabled": True,

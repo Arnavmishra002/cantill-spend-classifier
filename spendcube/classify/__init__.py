@@ -361,6 +361,7 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
     out_df["node"] = cur["unit_id"].map(m["node"]).values
     out_df["confidence"] = cur["unit_id"].map(m["confidence"]).values
     out_df["class_source"] = cur["unit_id"].map(m["class_source"]).values
+    stats["consistency"] = _consistency_pass(out_df, ccfg)
     stats["class_source_lines"] = out_df["class_source"].value_counts().to_dict()
     stats["_units"] = units[units["current"]]
     return stats
@@ -392,6 +393,48 @@ def _profile_suppliers(llm, units: pd.DataFrame, cand, leaf_ids, tax) -> dict:
         return {}
     log.info("LLM: profiling %d suppliers", len(items))
     return llm.profile_suppliers(items)
+
+
+def _consistency_pass(df: pd.DataFrame, ccfg: dict) -> dict:
+    """Low-confidence lines take the dominant category of their group's confident lines.
+
+    Groups: the supplier, plus any configured fields (e.g. a contract number). Many
+    clients file spend by supplier or contract; a vague line ("Mining services",
+    "Hand tools") on a contract whose other lines are clearly one category usually
+    belongs there. Measured on A with labels hidden: +3 to +4 points L3 (line).
+    """
+    c = ccfg.get("consistency", {}) or {}
+    if c.get("enabled", True) is False:
+        return {}
+    hi, lo, share_min = float(c.get("strong", 0.85)), float(c.get("weak", 0.7)), float(c.get("share", 0.7))
+    min_strong = int(c.get("min_strong_lines", 3))
+    fields = ["supplier_key"] + list(c.get("group_fields", []) or [])
+    stats = {}
+    for f in fields:
+        col = f if f in df.columns else (f"raw__{f}" if f"raw__{f}" in df.columns else None)
+        if col is None:
+            continue
+        g = df[col].fillna("").astype(str)
+        conf = df["confidence"].astype(float)
+        w = df["spend_rc"].abs().fillna(0.0) + 1e-6 if "spend_rc" in df.columns else pd.Series(1.0, index=df.index)
+        strong = (conf >= hi) & (g != "") & df["node"].notna()
+        if not strong.any():
+            continue
+        dist = pd.DataFrame({"g": g[strong], "n": df.loc[strong, "node"], "w": w[strong]}) \
+            .groupby(["g", "n"]).agg(w=("w", "sum"), k=("w", "size")).reset_index()
+        tot = dist.groupby("g")["w"].transform("sum")
+        cnt = dist.groupby("g")["k"].transform("sum")
+        dist["share"] = dist["w"] / tot
+        dist = dist[cnt >= min_strong].sort_values("share", ascending=False).drop_duplicates("g").set_index("g")
+        weak = (conf < lo) & g.isin(dist.index)
+        new = g.map(dist["n"])
+        sh = g.map(dist["share"])
+        ch = weak & (sh >= share_min) & (new != df["node"])
+        df.loc[ch, "node"] = new[ch]
+        df.loc[ch, "confidence"] = (sh[ch] * 0.75).round(3)
+        df.loc[ch, "class_source"] = df.loc[ch, "class_source"].astype(str) + "+group"
+        stats[f] = int(ch.sum())
+    return stats
 
 
 def _llm_line(r) -> str:
