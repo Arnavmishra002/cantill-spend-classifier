@@ -351,7 +351,7 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
                 source[i] = "llm_judge" if v.get("judged") else ("llm_agree" if v.get("agree") else "llm")
             llm_stats = llm.summary()
             # an unsure pick of a specific leaf falls back to its branch's general leaf
-            gthr = float(ccfg.get("general_fallback_below", 0.5))
+            gthr = float(ccfg.get("general_fallback_below", 0.6))
             n_gen = 0
             if gthr > 0:
                 for i in np.where(np.char.startswith(source.astype(str), "llm") & (conf < gthr))[0]:
