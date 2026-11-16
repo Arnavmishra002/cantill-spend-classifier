@@ -1,78 +1,97 @@
-# RUNBOOK – blind test, Thu 19 Nov 2026, 10:00–12:00 IST
+# RUNBOOK: blind test, Thursday 19 November 2026, 10:00 to 12:00 IST
 
-Rules: **no code changes after 10:00.** Only the C config and the three output files are pushed, into
-`submission/`. Target: pushed by **11:15**.
+Rules: no code changes after 10:00. Push only the Company C config and the three output files, into `submission/`.
+Target: pushed by 11:15. Hard stop: 12:00.
 
-## 0. Before 10:00 (once)
+## 0. Before 10:00
+
 ```bash
 cd cantill-spend-classifier
-git status                      # clean, on main, at tag v1.0-freeze
-source .venv/bin/activate       # or: python3.12 -m venv .venv && pip install -r requirements.txt
-cat .env | cut -d= -f1          # ANTHROPIC_API_KEY / GEMINI_API_KEY present (values never printed)
-python -m pytest -q             # all green
+git status                       # clean, on main, at tag v1.0-freeze
+source .venv/bin/activate        # or: python3.12 -m venv .venv && pip install -r requirements.txt
+cut -d= -f1 .env                 # ANTHROPIC_API_KEY listed (the value is never printed)
+python -m pytest -q              # all tests pass
 ```
 
 ## 1. Put the new data in `data/` (git-ignored)
-Unzip the email attachment so that it looks like (names may differ – configs accept patterns):
+
+Unzip the email attachment so that it looks like this (file names may differ; the configs accept patterns):
+
 ```
-data/A2/   erp_goods_receipts*.csv, invoice_tool_export*.csv   (+ taxonomy if shipped)
-data/B2/   invoice_lines*.csv                                   (+ fx table / taxonomy if shipped)
-data/C/    <invoice lines file>, <taxonomy file>
+data/A2/   erp_goods_receipts*.csv, invoice_tool_export*.csv   (and the tree if shipped)
+data/B2/   invoice_lines*.csv                                   (and the FX table or tree if shipped)
+data/C/    <invoice lines file>, <tree file>
 ```
-The A/B trees, labels and FX table are found in `data/company_A` / `data/company_B` when the new folders do not
-repeat them. **Do not delete `data/company_A` or `data/company_B`** (they are the training rows for A2/B2).
+
+The A and B trees, labels and FX table are read from `data/company_A` and `data/company_B` when the new folders
+do not repeat them. Do not delete `data/company_A` or `data/company_B`: they are the training rows for A2 and B2.
 
 ## 2. Draft the Company C config (config only, no code)
+
 ```bash
 python run.py init-config --data data/C --taxonomy "<tree file name>" --company C --out configs/company_c.yaml
+python run.py check-config --config configs/company_c.yaml --data data/C
 ```
-Review `configs/company_c.yaml` (10 minutes max):
-- [ ] `sources[0].file` and `record_id.column` = the line id column (output uses it as `record_id`)
-- [ ] `columns.amount` is the line amount; `amount_type` net/gross correct; tax rate column if gross
-- [ ] `currency` / `fx_rate` / `fx.table` (reporting currency is USD for C per brief)
-- [ ] `date` = invoice date, `posting_date` if present; `dates.dayfirst` matches the file
-- [ ] `supplier_name`, `supplier_id`, `description`, `item_code`, `gl_description`, `context` sensible
-- [ ] `status_map`: paid/approved → include; cancelled → CANCELLED; rejected/hold/... → NOT_APPROVED
-- [ ] `non_procurement`: keep generic tax/intercompany/finance rules; check drafted GL account list
-- [ ] `taxonomy.level_columns` in order L1..L4 (or `format: parent_child`)
-- [ ] `classification.company_context`: fill it in now, at 10:00, in one or two plain sentences (industry,
-      what the company buys). The draft writes one when the API is reachable; check it, and replace any TODO.
-- [ ] `cost_cap_usd` (default 8) is fine
+
+Review `configs/company_c.yaml` and the `check-config` output (10 minutes at most):
+
+- [ ] `classification.company_context`: fill it in now, at 10:00, in one or two plain sentences (industry, what
+      the company buys). The draft writes one when the API is reachable; check it and replace any TODO.
+- [ ] `record_id.column` is the line id column (the output uses it as `record_id`).
+- [ ] `columns.amount` is the line amount; `amount_type` net or gross is right; tax rate column if gross.
+- [ ] `currency` and `fx_rate`; `fx.table` if the email ships rates. Without a table the shipped ECB monthly table
+      converts other currencies to USD (lines are flagged `FX_PUBLIC_TABLE`).
+- [ ] `date` is the invoice date, `posting_date` if present; `dayfirst` was decided from the values.
+- [ ] `supplier_name`, `supplier_id`, `description`, `item_code`, `gl_description`, `context` look sensible.
+- [ ] `status_map`: paid and approved are included; cancelled is CANCELLED; rejected, on hold and the like are
+      NOT_APPROVED.
+- [ ] `non_procurement`: keep the generic tax, intercompany and finance rules; check the drafted GL account list.
+- [ ] `taxonomy.level_columns` are in order L1 to L4 (or `format: parent_child`).
+- [ ] `check-config` shows parse rates near 100% for amount and date, and plausible exclusions.
 
 ## 3. Run the three companies
+
 ```bash
 python run.py --config configs/company_a.yaml --data data/A2 --out submission/arnav_mishra__A2.csv
 python run.py --config configs/company_b.yaml --data data/B2 --out submission/arnav_mishra__B2.csv
 python run.py --config configs/company_c.yaml --data data/C  --out submission/arnav_mishra__C.csv
 ```
-Each ends with `=== RUN OK ===` (validation passed) or prints `OUTPUT VALIDATION FAILED` and exits 2.
-If the LLM is unavailable the run still finishes on the offline layers (lower accuracy) – that is acceptable.
-Expected runtime: A2/B2 a few minutes, C ≈ 10–25 min for 25k lines.
+
+Each run prints an LLM health line per model first, then ends with `=== RUN OK ===` (validation passed), or prints
+`OUTPUT VALIDATION FAILED` or an `ERROR:` line and exits with code 2. If the summary says
+`LLM : NOT USED`, the key or the network is the problem: fix `.env` and re-run. Finished batches are cached, so a
+re-run only pays for what is missing. Expected runtime: A2 and B2 a few minutes each, C about 10 to 25 minutes for
+25,000 lines.
 
 ## 4. Check
-- [ ] three `=== RUN OK ===` blocks; row counts = input rows
-- [ ] `excluded` counts look plausible (C: some NON_PROCUREMENT? any DUPLICATE?)
-- [ ] `reconcile` line: input = included + excluded
-- [ ] open each `_report.json`: `classification.class_source_lines` mostly memory/supervised/llm, not retrieval
-- [ ] spot-check 10 lines of C in the `_audit.csv` (description vs l1–l4)
-If C's config needs a fix (a wrong column), edit **only** `configs/company_c.yaml` and re-run step 3 for C.
 
-## 5. Submit (config + outputs only)
+- [ ] Three `=== RUN OK ===` blocks; row counts equal input rows.
+- [ ] Exclusion counts look plausible.
+- [ ] The reconcile line shows input = included + excluded.
+- [ ] In `out/arnav_mishra__C_report.json`, `classification.class_source_lines` is mostly `llm`, not `retrieval`.
+- [ ] Spot-check 10 lines of C in `out/arnav_mishra__C_audit.csv` (description against l1 to l4).
+
+If the C config needs a fix (a wrong column), edit only `configs/company_c.yaml` and re-run step 3 for C.
+
+## 5. Submit (config and outputs only)
+
 ```bash
 cp configs/company_c.yaml submission/company_c.yaml
-git status --short                      # expect only submission/ files
+git status --short                       # expect only submission/ files
 git add submission/arnav_mishra__A2.csv submission/arnav_mishra__B2.csv submission/arnav_mishra__C.csv submission/company_c.yaml
-git diff --cached --name-only           # nothing outside submission/, no audit/report files
+git diff --cached --name-only            # nothing outside submission/, no audit or report files
 git commit -m "Blind test outputs (A2, B2, C) and Company C config"
 git push origin main
 ```
-Then open the repo on GitHub and confirm the four files are visible. Done by 11:15; hard stop 12:00.
+
+Open the repository on GitHub and confirm the four files are there.
 
 ## If something breaks
+
 | Symptom | Action (no code edits) |
 |---|---|
-| `No file matching ...` | file name differs: pass the right folder, or edit only `configs/company_c.yaml` for C. For A2/B2 copy/rename the file inside `data/A2` to the expected name. |
-| `column(s) [...] not in file` (C) | fix the column name in `configs/company_c.yaml` |
-| LLM errors / rate limits | let it finish (offline fallback) or re-run: finished batches are cached |
-| Validation failure on categories | check `taxonomy.level_columns` order in the C config |
-| Out of time | `--no-llm` runs everything offline in under 2 minutes |
+| `No file matching ...` | The file name differs. Pass the right folder; for A2 or B2 copy the file inside `data/A2` to the expected name; for C fix `configs/company_c.yaml`. |
+| `ERROR: config ... column ... is not in the header` | Fix the column name in `configs/company_c.yaml`. |
+| `LLM : NOT USED` | Check `.env` and the network, then re-run. Use `--require-llm` to make the run stop instead. |
+| Validation failure on categories | Check the order of `taxonomy.level_columns` in the C config. |
+| Out of time | `--no-llm` runs everything offline in under two minutes (lower accuracy). |
