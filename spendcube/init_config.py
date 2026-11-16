@@ -461,8 +461,9 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             notes.append(f"{p.name}: currencies {top.head(8).to_dict()}")
             foreign = [c for c in top.index if c != reporting]
             if foreign and "fx_rate" not in roles:
-                notes.append(f"{p.name}: WARNING non-{reporting} currencies {foreign[:8]} but no rate column: "
-                             f"add an FX table under `fx.table` or those lines get spend 0 (flag NO_FX_RATE)")
+                notes.append(f"{p.name}: non-{reporting} currencies {foreign[:8]} and no rate column: the shipped "
+                             f"ECB monthly table converts them (flag FX_PUBLIC_TABLE); add the client's table under "
+                             f"`fx.table` if one is provided (CHECK)")
         else:
             src["currency_default"] = reporting
             notes.append(f"{p.name}: no currency column -> assumed {reporting} (CHECK)")

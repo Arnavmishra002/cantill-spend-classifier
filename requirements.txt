@@ -1,12 +1,11 @@
-# Python 3.11+ (developed and tested on 3.12)
-pandas>=2.2,<4
-numpy>=1.26
-scipy>=1.11
-scikit-learn>=1.4
-rapidfuzz>=3.6
-PyYAML>=6.0
-openpyxl>=3.1            # only for .xlsx inputs
-anthropic>=2.0,<3        # optional at run time: LLM layer (needs ANTHROPIC_API_KEY)
-google-genai>=3.0,<4     # optional at run time: Gemini second opinion / embeddings (needs GEMINI_API_KEY)
-faiss-cpu>=1.8           # optional: kNN index (numpy fallback if missing)
-pytest>=8
+# Exact versions used to build and test the tool (Python 3.12; 3.11+ supported).
+pandas==3.1.1
+numpy==2.5.5
+scipy==1.18.1
+scikit-learn==1.9.1
+rapidfuzz==3.14.6
+PyYAML==6.0.3
+openpyxl==3.1.5        # only for .xlsx inputs
+anthropic==2.8.0       # Claude API; the tool runs offline without a key
+faiss-cpu==1.16.0      # kNN index; a numpy fallback is used if it cannot be installed
+pytest==9.2.0

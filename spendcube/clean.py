@@ -49,6 +49,49 @@ def load_fx_table(cfg: dict, data_dir: Path) -> pd.DataFrame | None:
     return out
 
 
+PUBLIC_FX = Path(__file__).resolve().parent / "data" / "fx_monthly_usd.csv"
+
+
+def load_public_fx(reporting: str) -> pd.DataFrame | None:
+    """Shipped public table (ECB monthly average reference rates, crossed through EUR,
+    plus official fixed pegs), as units of currency per 1 reporting-currency unit."""
+    if not PUBLIC_FX.exists():
+        return None
+    t = pd.read_csv(PUBLIC_FX, dtype={"currency": str, "month": str})
+    pub = pd.DataFrame({"currency": t["currency"].str.upper(),
+                        "month": pd.to_datetime(t["month"], format="%Y-%m"),
+                        "rate": t["units_per_usd"].astype(float)})
+    if reporting != "USD":
+        base = pub[pub["currency"] == reporting][["month", "rate"]].rename(columns={"rate": "base"})
+        if base.empty:
+            return None
+        pub = pub.merge(base, on="month")
+        pub["rate"] = pub["rate"] / pub["base"]
+        pub = pub[["currency", "month", "rate"]]
+    return pub
+
+
+def orient_table(fx: pd.DataFrame, pub: pd.DataFrame | None) -> tuple[pd.DataFrame, str]:
+    """Check a supplied FX table against public rates; invert it if it is on the wrong base
+    (reporting units per currency unit instead of currency units per reporting unit)."""
+    if fx is None or pub is None:
+        return fx, "unchecked"
+    m = fx.merge(pub, on=["currency", "month"], suffixes=("", "_pub"))
+    m = m[(m["rate"] > 0) & (m["rate_pub"] > 0)]
+    if len(m) < 3:
+        return fx, "unchecked"
+    direct = float(np.median(m["rate"] / m["rate_pub"]))
+    inverse = float(np.median((1.0 / m["rate"]) / m["rate_pub"]))
+    if 0.5 <= direct <= 2.0:
+        return fx, "agrees with public rates"
+    if 0.5 <= inverse <= 2.0:
+        log.warning("FX table is on the inverse base (reporting units per currency unit); inverted")
+        fx = fx.assign(rate=1.0 / fx["rate"])
+        return fx, "inverted to match public rates"
+    log.warning("FX table differs from public rates (median ratio %.3f); used as given", direct)
+    return fx, f"differs from public rates (median ratio {direct:.3f})"
+
+
 def _table_rate(fx: pd.DataFrame, cur: pd.Series, when: pd.Series) -> pd.Series:
     """Rate for (currency, month); nearest available month for that currency."""
     res = pd.Series(np.nan, index=cur.index)
@@ -144,31 +187,55 @@ def clean(df: pd.DataFrame, cfg: dict, data_dir: Path) -> pd.DataFrame:
             cur.loc[m] = (s.get("currency_default") or rc).upper()
     df["currency_norm"] = cur
     fxcfg = cfg.get("fx") or {}
-    fx = load_fx_table(cfg, data_dir)
+    sem = fxcfg.get("rate_semantics", "units_per_reporting")
     is_rc = cur == rc
-    table_rate = _table_rate(fx, cur, df["fx_date"])
+    pub = load_public_fx(rc)
+    fx, fx_check = orient_table(load_fx_table(cfg, data_dir), pub)
+    df.attrs["fx_table_check"] = fx_check
+    ref_cfg = _table_rate(fx, cur, df["fx_date"])     # client's table (if any)
+    ref_pub = _table_rate(pub, cur, df["fx_date"])    # shipped public table
+    ref = ref_cfg.fillna(ref_pub)
     given = df["fx_rate_given"].where(df["fx_rate_given"] > 0)
+    if sem != "units_per_reporting":                  # normalise to currency units per reporting unit
+        given = 1.0 / given
     if fxcfg.get("ignore_rate_for_reporting_currency", True):
         given = given.where(~is_rc)
     lo_b, hi_b = fxcfg.get("sanity_band", [0.33, 3.0])
-    ratio = given / table_rate
-    insane = given.notna() & table_rate.notna() & ((ratio < lo_b) | (ratio > hi_b))
-    _add_flag(df, insane, "FX_RATE_REJECTED")
-    rate = given.where(~insane)
-    df["fx_source"] = np.where(is_rc, "reporting", np.where(rate.notna(), "line", "table"))
-    rate = rate.fillna(table_rate)
+    has_ref = ref.notna()
+    # two hypotheses per line rate: as given, or on the inverse base. The inverse wins
+    # when it is much closer to the reference and close in absolute terms (within 25%),
+    # which also catches near-parity currencies (EUR 1.09 given where 0.92 is expected).
+    d_dir = np.abs(np.log(given / ref))
+    d_inv = np.abs(np.log((1.0 / given) / ref))
+    inverted = given.notna() & has_ref & (d_inv < np.log(1.25)) & (d_inv + 0.05 < d_dir)
+    ok = given.notna() & ~inverted & (~has_ref | ((given / ref).between(lo_b, hi_b)))
+    rejected = given.notna() & ~ok & ~inverted
+    _add_flag(df, inverted, "FX_RATE_INVERTED")
+    _add_flag(df, rejected, "FX_RATE_REJECTED")
+    rate = given.where(ok)
+    rate[inverted] = 1.0 / given[inverted]
+    src = pd.Series(np.where(ok, "line", np.where(inverted, "line_inverted", "")), index=df.index, dtype=object)
+    fill = rate.isna() & ref_cfg.notna()
+    rate[fill], src[fill] = ref_cfg[fill], "config_table"
+    fill = rate.isna() & ref_pub.notna()
+    rate[fill], src[fill] = ref_pub[fill], "public_table"
+    _add_flag(df, src == "public_table", "FX_PUBLIC_TABLE")
+    # last resort: the median of the accepted line rates for that currency in this file
+    med = rate[src.isin(["line", "line_inverted"])].groupby(cur).median()
+    fill = rate.isna() & cur.isin(med.index) & ~is_rc
+    rate[fill], src[fill] = cur[fill].map(med), "file_median"
+    _add_flag(df, src == "file_median", "FX_FILE_MEDIAN")
     rate = rate.where(~is_rc, 1.0)
+    src[is_rc] = "reporting"
     missing = rate.isna()
+    src[missing] = "none"
+    df["fx_source"] = src
     _add_flag(df, missing, "NO_FX_RATE")
     if missing.any():
-        log.warning("%d lines have no FX rate (currencies %s); spend set to 0 and flagged",
+        log.warning("%d lines have no FX rate in any source (currencies %s); spend set to 0 and flagged",
                     int(missing.sum()), sorted(cur[missing].unique())[:10])
-    sem = fxcfg.get("rate_semantics", "units_per_reporting")
     df["fx_rate_used"] = rate
-    if sem == "units_per_reporting":
-        df["spend_rc"] = df["net_amount"] / rate
-    else:  # reporting units per line-currency unit
-        df["spend_rc"] = df["net_amount"] * rate
+    df["spend_rc"] = df["net_amount"] / rate
     df.loc[missing | df["net_amount"].isna(), "spend_rc"] = 0.0
     df["spend_rc"] = df["spend_rc"].round(2)
 

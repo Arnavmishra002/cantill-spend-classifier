@@ -1,5 +1,5 @@
 # ---- Confidential task data: NEVER commit ----
-data/
+/data/
 *.zip
 *.pdf
 *.xlsx
@@ -8,6 +8,7 @@ data/
 # Any CSV is treated as data and ignored, except the named deliverables in submission/
 *.csv
 !submission/arnav_mishra__*.csv
+!spendcube/data/*.csv
 submission/*_audit.csv
 *_report.json
 
