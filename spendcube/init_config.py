@@ -534,7 +534,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             "consistency": {"group_fields": consistency_groups, "strong": 0.8, "weak": 0.7, "share": 0.7},
             "labels": None,
             # Claude only, same keys as the defaults in spendcube/config.py
-            "llm": {**copy.deepcopy(DEFAULTS["classification"]["llm"]), "cost_cap_usd": 60.0},
+            "llm": {**copy.deepcopy(DEFAULTS["classification"]["llm"]), "cost_cap_usd": 60.0, "concurrency": 16},
             "embeddings": {"provider": "lsa", "dim": 256},
         },
         "output": {"template": "output_template.csv"},

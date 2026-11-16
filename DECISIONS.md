@@ -117,3 +117,6 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     spend-weighted accuracy rests on a few lines. Line-weighted accuracy is always reported next to it.
 37. Determinism. Claude rejects temperature settings, so a disk cache keyed by model, prompt, tree and line makes
     re-runs on the same machine identical. Item codes are not sent to the LLM, so identical lines share one answer.
+38. Runtime and cost at C size. Units, not lines, drive cost. A's 65,549 lines collapse to 8,483 units; 5,000
+    California lines are 4,528 units. That run took 137 s and 5.94 USD with 57 units on Opus and 4,471 on Sonnet;
+    the 6 USD cap trimmed only second opinions. Drafted C configs use concurrency 16 and a 60 USD cap.

@@ -68,8 +68,9 @@ python run.py --config configs/company_b.yaml --data data/B2 --out submission/ar
 ```
 
 Measured on Monday: A (65,549 lines) about 2 minutes, B (41,028 lines) about 12 minutes with no cache, 2,000
-California lines with a 200-leaf tree 2 minutes and 3.30 USD. A 25,000-line C is expected to take about 25 minutes
-and cost about 40 USD; the drafted cap is 60 USD.
+California lines with a 200-leaf tree 2 minutes and 3.30 USD, 5,000 California lines 2.3 minutes and 5.94 USD. A
+25,000-line C of unique text is projected (not measured) at 12 to 15 minutes and about 30 USD; the drafted cap is
+60 USD.
 
 Each run prints an LLM health line per model first, then ends with `=== RUN OK ===` (validation passed), or prints
 `OUTPUT VALIDATION FAILED` or an `ERROR:` line and exits with code 2. If the summary says `LLM : NOT USED`, the key
