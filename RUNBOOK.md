@@ -59,18 +59,20 @@ Review `configs/company_c.yaml` and the `check-config` output (10 minutes at mos
 Start C first: it takes longest and is worth 50 points. Run A2 and B2 at the same time in a second terminal.
 
 ```bash
-python run.py --config configs/company_c.yaml --data data/C  --out submission/arnav_mishra__C.csv
+python run.py --config configs/company_c.yaml --data data/C  --out submission/arnav_mishra__C.csv --max-llm-cost 50
 ```
 
 ```bash
-python run.py --config configs/company_a.yaml --data data/A2 --out submission/arnav_mishra__A2.csv
-python run.py --config configs/company_b.yaml --data data/B2 --out submission/arnav_mishra__B2.csv
+python run.py --config configs/company_a.yaml --data data/A2 --out submission/arnav_mishra__A2.csv --max-llm-cost 2
+python run.py --config configs/company_b.yaml --data data/B2 --out submission/arnav_mishra__B2.csv --max-llm-cost 8
 ```
 
 Measured on Monday: A (65,549 lines) about 2 minutes, B (41,028 lines) about 12 minutes with no cache, 2,000
 California lines with a 200-leaf tree 2 minutes and 3.30 USD, 5,000 California lines 2.3 minutes and 5.94 USD. A
 25,000-line C of unique text is projected (not measured) at 12 to 15 minutes and about 30 USD; the drafted cap is
-60 USD.
+60 USD. Test-day budget agreed with Arnav: 60 USD in total, set by the flags above (C 50, B2 8, A2 2). If a run
+prints "LLM cost cap reached", the lowest-spend units were classified offline; that is acceptable. Raise a flag only
+if there is budget left, and the cache then pays only for the rest.
 
 Each run prints an LLM health line per model first, then ends with `=== RUN OK ===` (validation passed), or prints
 `OUTPUT VALIDATION FAILED` or an `ERROR:` line and exits with code 2. If the summary says `LLM : NOT USED`, the key

@@ -124,7 +124,7 @@ classification:
     second_top_spend_share: 0.5
     second_top_spend_max_units: 400
     max_units: 20000
-    cost_cap_usd: 4.0
+    cost_cap_usd: 10.0      # a ceiling, not a target; A2 needs about 1 USD
   embeddings: {provider: lsa, dim: 256}
 
 output:

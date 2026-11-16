@@ -102,7 +102,7 @@ classification:
     second_top_spend_share: 0.5
     second_top_spend_max_units: 400
     max_units: 20000
-    cost_cap_usd: 10.0
+    cost_cap_usd: 25.0      # a ceiling, not a target; the B build run cost 13.87 USD with no cache
   embeddings: {provider: lsa, dim: 256}
 
 output:
