@@ -382,8 +382,9 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
     units["calib_margin"] = calib_margin
     units["calib_sim1"] = srt[:, -1]
     units["calib_sim2"] = srt[:, -2] if srt.shape[1] > 1 else 0.0
+    units["conf_raw"] = np.clip(conf, 0.0, 1.0)   # before calibration: decisions use this
     if rest.any():
-        # calibrated confidence: probability that the chosen leaf is right
+        # calibrated confidence: probability that the chosen leaf is right (reporting only)
         cal = OfflineCalibrator()
         fams = np.array([family(x) for x in source])
         for fam, col_ in (("retrieval", "calib_sim1"), ("propagated", "calib_p1")):
@@ -401,6 +402,7 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
     out_df["node"] = cur["unit_id"].map(m["node"]).values
     out_df["confidence"] = cur["unit_id"].map(m["confidence"]).values
     out_df["class_source"] = cur["unit_id"].map(m["class_source"]).values
+    out_df["conf_raw"] = cur["unit_id"].map(m["conf_raw"]).values
     out_df["calib_p1"] = cur["unit_id"].map(m["calib_p1"]).values
     out_df["calib_margin"] = cur["unit_id"].map(m["calib_margin"]).values
     out_df["calib_sim1"] = cur["unit_id"].map(m["calib_sim1"]).values
@@ -471,7 +473,9 @@ def _consistency_pass(df: pd.DataFrame, ccfg: dict) -> dict:
         if col is None:
             continue
         g = df[col].fillna("").astype(str)
-        conf = df["confidence"].astype(float)
+        # decisions use the raw score: calibration rescales the reported confidence only
+        use_cal = bool(c.get("offline_lines_use_calibrated", False))
+        conf = (df["confidence"] if use_cal or "conf_raw" not in df.columns else df["conf_raw"]).astype(float)
         w = df["spend_rc"].abs().fillna(0.0) + 1e-6 if "spend_rc" in df.columns else pd.Series(1.0, index=df.index)
         strong = (conf >= hi) & (g != "") & df["node"].notna()
         if not strong.any():
