@@ -406,6 +406,17 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
     out_df["calib_sim1"] = cur["unit_id"].map(m["calib_sim1"]).values
     out_df["calib_sim2"] = cur["unit_id"].map(m["calib_sim2"]).values
     out_df["calib_weak"] = cur["unit_id"].map(m["weak"]).values
+    # a record that carries its own label keeps it (the client's answer for that very line)
+    if labels is not None:
+        own = labels[labels["node"].notna()].drop_duplicates("record_id").set_index("record_id")["node"]
+        rid = out_df["record_id"]
+        has_own = rid.isin(own.index) & rid.map(own).isin(set(col)).fillna(False).astype(bool)
+        if has_own.any():
+            q = float((ccfg.get("labels") or {}).get("quality", 1.0))
+            out_df.loc[has_own, "node"] = rid[has_own].map(own)
+            out_df.loc[has_own, "confidence"] = round(0.99 * q, 3)
+            out_df.loc[has_own, "class_source"] = "label"
+        stats["own_label_lines"] = int(has_own.sum())
     stats["consistency"] = _consistency_pass(out_df, ccfg)
     stats["class_source_lines"] = out_df["class_source"].value_counts().to_dict()
     stats["_units"] = units[units["current"]]
@@ -471,7 +482,7 @@ def _consistency_pass(df: pd.DataFrame, ccfg: dict) -> dict:
         cnt = dist.groupby("g")["k"].transform("sum")
         dist["share"] = dist["w"] / tot
         dist = dist[cnt >= min_strong].sort_values("share", ascending=False).drop_duplicates("g").set_index("g")
-        weak = (conf < lo) & g.isin(dist.index)
+        weak = (conf < lo) & g.isin(dist.index) & (df["class_source"].astype(str) != "label")
         new = g.map(dist["n"])
         sh = g.map(dist["share"])
         ch = weak & (sh >= share_min) & (new != df["node"])
