@@ -38,6 +38,8 @@ python run.py init-config --data data/C --taxonomy "<tree file name>" --company 
 python run.py check-config --config configs/company_c.yaml --data data/C
 ```
 
+If `init-config` stops with an error, use the template instead (see "If something breaks" below).
+
 Review `configs/company_c.yaml` and the `check-config` output (10 minutes at most):
 
 - [ ] `classification.company_context`: fill it in now, at 10:00, in one or two plain sentences (industry, what
@@ -107,6 +109,7 @@ Open the repository on GitHub and confirm the four files are there.
 
 | Symptom | Action (no code edits) |
 |---|---|
+| `init-config` stops with an error, or its draft maps the wrong columns | `cp configs/company_c_template.yaml configs/company_c.yaml`, replace every CHANGE_ME with the real names, delete the optional lines whose columns do not exist, then run `check-config`. |
 | `No file matching ...` | The file name differs. Pass the right folder; for A2 or B2 copy the file inside `data/A2` to the expected name; for C fix `configs/company_c.yaml`. |
 | `ERROR: config ... column ... is not in the header` | Fix the column name in `configs/company_c.yaml`. |
 | `LLM : NOT USED` | Check `.env` and the network, then re-run. Use `--require-llm` to make the run stop instead. |

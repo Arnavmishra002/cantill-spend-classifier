@@ -92,11 +92,13 @@ def orient_table(fx: pd.DataFrame, pub: pd.DataFrame | None) -> tuple[pd.DataFra
     return fx, f"differs from public rates (median ratio {direct:.3f})"
 
 
-def _table_rate(fx: pd.DataFrame, cur: pd.Series, when: pd.Series) -> pd.Series:
-    """Rate for (currency, month); nearest available month for that currency."""
+def _table_rate(fx: pd.DataFrame, cur: pd.Series, when: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Rate for (currency, month) from the nearest available month for that currency, and
+    the distance in days to that month (0 for a line without a date, which gets the median)."""
     res = pd.Series(np.nan, index=cur.index)
+    gap = pd.Series(np.nan, index=cur.index)
     if fx is None or fx.empty:
-        return res
+        return res, gap
     month = when.dt.to_period("M").dt.to_timestamp()
     for c, grp in fx.groupby("currency"):
         idx = cur.index[cur == c]
@@ -111,11 +113,43 @@ def _table_rate(fx: pd.DataFrame, cur: pd.Series, when: pd.Series) -> pd.Series:
             # nearest month by absolute distance
             mi = m[ok].astype("datetime64[ns]").astype("int64")[:, None]
             gm = months.astype("datetime64[ns]").astype("int64")[None, :]
-            j = np.abs(mi - gm).argmin(axis=1)
+            dist = np.abs(mi - gm)
+            j = dist.argmin(axis=1)
             res.loc[idx[ok]] = rates[j]
+            gap.loc[idx[ok]] = dist[np.arange(len(j)), j] / 86_400e9
         if (~ok).any():  # no date at all: use the median rate for the currency
             res.loc[idx[~ok]] = float(np.median(rates))
-    return res
+            gap.loc[idx[~ok]] = 0.0
+    return res, gap
+
+
+def _table_range(fx: pd.DataFrame, cur: pd.Series, d1: pd.Series, d2: pd.Series,
+                 max_gap_days: float) -> tuple[pd.Series, pd.Series]:
+    """Lowest and highest table rate for the currency over the months from the earlier to
+    the later of two dates (invoice and posting). Months further than max_gap_days from
+    both dates are not used; NaN when the table has no month in or near the window."""
+    lo = pd.Series(np.nan, index=cur.index)
+    hi = pd.Series(np.nan, index=cur.index)
+    if fx is None or fx.empty:
+        return lo, hi
+    a, b = d1.fillna(d2), d2.fillna(d1)
+    start = pd.concat([a, b], axis=1).min(axis=1).dt.to_period("M").dt.to_timestamp()
+    end = pd.concat([a, b], axis=1).max(axis=1).dt.to_period("M").dt.to_timestamp()
+    slack = np.timedelta64(int(max_gap_days), "D")
+    for c, grp in fx.groupby("currency"):
+        idx = cur.index[(cur == c) & start.notna()]
+        if len(idx) == 0:
+            continue
+        g = grp.sort_values("month")
+        months = g["month"].values.astype("datetime64[ns]")
+        rates = g["rate"].values
+        keys = pd.DataFrame({"s": start.loc[idx].values, "e": end.loc[idx].values}, index=idx)
+        for (s0, e0), sub in keys.groupby(["s", "e"]):
+            sel = (months >= np.datetime64(s0) - slack) & (months <= np.datetime64(e0) + slack)
+            if sel.any():
+                lo.loc[sub.index] = rates[sel].min()
+                hi.loc[sub.index] = rates[sel].max()
+    return lo, hi
 
 
 def clean(df: pd.DataFrame, cfg: dict, data_dir: Path) -> pd.DataFrame:
@@ -200,39 +234,63 @@ def clean(df: pd.DataFrame, cfg: dict, data_dir: Path) -> pd.DataFrame:
     pub = load_public_fx(rc)
     fx, fx_check = orient_table(load_fx_table(cfg, data_dir), pub)
     df.attrs["fx_table_check"] = fx_check
-    ref_cfg = _table_rate(fx, cur, df["fx_date"])     # client's table (if any)
-    ref_pub = _table_rate(pub, cur, df["fx_date"])    # shipped public table
+    # A table month far from the line's date is stale (the public table stops early for some
+    # currencies, such as ARS in 2020). A stale rate is not used to judge a line rate and is
+    # used to fill only after the file's own rates.
+    stale_days = float(fxcfg.get("stale_table_days", 95))
+    ref_cfg_any, gap_cfg = _table_rate(fx, cur, df["fx_date"])     # client's table (if any)
+    ref_pub_any, gap_pub = _table_rate(pub, cur, df["fx_date"])    # shipped public table
+    ref_cfg = ref_cfg_any.where(gap_cfg <= stale_days)
+    ref_pub = ref_pub_any.where(gap_pub <= stale_days)
     ref = ref_cfg.fillna(ref_pub)
+    # the line may have been booked at any month from invoice to posting (high inflation)
+    lo_c, hi_c = _table_range(fx, cur, df["date_trusted"], df["posting_date_parsed"], stale_days)
+    lo_p, hi_p = _table_range(pub, cur, df["date_trusted"], df["posting_date_parsed"], stale_days)
+    has_c = lo_c.notna()
+    win_lo, win_hi = lo_c.where(has_c, lo_p), hi_c.where(has_c, hi_p)
     given = df["fx_rate_given"].where(df["fx_rate_given"] > 0)
     if sem != "units_per_reporting":                  # normalise to currency units per reporting unit
         given = 1.0 / given
     if fxcfg.get("ignore_rate_for_reporting_currency", True):
         given = given.where(~is_rc)
     lo_b, hi_b = fxcfg.get("sanity_band", [0.33, 3.0])
-    has_ref = ref.notna()
+    win_lo, win_hi = win_lo.fillna(ref), win_hi.fillna(ref)
+    has_ref = win_lo.notna()
+
+    def _dist(x):
+        """log distance from a rate to the reference range (0 inside it)."""
+        return np.maximum(np.log(win_lo / x), 0.0) + np.maximum(np.log(x / win_hi), 0.0)
+
     # two hypotheses per line rate: as given, or on the inverse base. The inverse wins
-    # when it is much closer to the reference and close in absolute terms (within 25%),
+    # when it is much closer to the reference range and close in absolute terms (within 25%),
     # which also catches near-parity currencies (EUR 1.09 given where 0.92 is expected).
-    d_dir = np.abs(np.log(given / ref))
-    d_inv = np.abs(np.log((1.0 / given) / ref))
+    d_dir = _dist(given)
+    d_inv = _dist(1.0 / given)
     inverted = given.notna() & has_ref & (d_inv < np.log(1.25)) & (d_inv + 0.05 < d_dir)
-    ok = given.notna() & ~inverted & (~has_ref | ((given / ref).between(lo_b, hi_b)))
+    in_band = (given / win_hi <= hi_b) & (given / win_lo >= lo_b)
+    ok = given.notna() & ~inverted & (~has_ref | in_band)
     rejected = given.notna() & ~ok & ~inverted
     _add_flag(df, inverted, "FX_RATE_INVERTED")
     _add_flag(df, rejected, "FX_RATE_REJECTED")
     rate = given.where(ok)
     rate[inverted] = 1.0 / given[inverted]
     src = pd.Series(np.where(ok, "line", np.where(inverted, "line_inverted", "")), index=df.index, dtype=object)
-    fill = rate.isna() & ref_cfg.notna()
+    fill = rate.isna() & ref_cfg.notna() & ~is_rc
     rate[fill], src[fill] = ref_cfg[fill], "config_table"
-    fill = rate.isna() & ref_pub.notna()
+    fill = rate.isna() & ref_pub.notna() & ~is_rc
     rate[fill], src[fill] = ref_pub[fill], "public_table"
-    _add_flag(df, src == "public_table", "FX_PUBLIC_TABLE")
-    # last resort: the median of the accepted line rates for that currency in this file
+    # then the median of the accepted line rates for that currency in this file
     med = rate[src.isin(["line", "line_inverted"])].groupby(cur).median()
     fill = rate.isna() & cur.isin(med.index) & ~is_rc
     rate[fill], src[fill] = cur[fill].map(med), "file_median"
     _add_flag(df, src == "file_median", "FX_FILE_MEDIAN")
+    # last: a stale table month, the client's first
+    fill = rate.isna() & ref_cfg_any.notna() & ~is_rc
+    rate[fill], src[fill] = ref_cfg_any[fill], "config_table_stale"
+    fill = rate.isna() & ref_pub_any.notna() & ~is_rc
+    rate[fill], src[fill] = ref_pub_any[fill], "public_table_stale"
+    _add_flag(df, src.isin(["public_table", "public_table_stale"]), "FX_PUBLIC_TABLE")
+    _add_flag(df, src.isin(["config_table_stale", "public_table_stale"]), "FX_STALE_TABLE")
     rate = rate.where(~is_rc, 1.0)
     src[is_rc] = "reporting"
     missing = rate.isna()

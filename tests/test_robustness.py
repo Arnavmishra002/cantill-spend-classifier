@@ -119,3 +119,13 @@ def test_out_of_range_dates_do_not_crash(tmp_path):
     assert len(pd.read_csv(tmp_path / "o.csv")) == 3
     assert "IMPOSSIBLE_DATE" in df2.loc[0, "flags"] and "IMPOSSIBLE_DATE" in df2.loc[1, "flags"]
     assert (df2["spend_rc"] > 0).all()          # FX still found (nearest month)
+
+
+def test_sidecars_go_to_the_override_folder_and_a_one_leaf_tree_runs(tmp_path):
+    cfgp = _company(tmp_path)
+    pd.DataFrame({"L1": ["Materials"], "L2": ["Metals"]}).to_csv(tmp_path / "tree.csv", index=False)
+    run(str(cfgp), str(tmp_path), str(tmp_path / "side.csv"), use_llm=False, cache_dir=str(tmp_path / "cache"))
+    side = tmp_path / "sidecars"
+    assert (side / "side_audit.csv").exists() and (side / "side_report.json").exists()
+    out = pd.read_csv(tmp_path / "side.csv")
+    assert out.loc[out["include"] == 1, "l2"].eq("Metals").all()

@@ -377,6 +377,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                (".csv", ".tsv", ".txt", ".xlsx", ".xls") and p.resolve() != tax_path.resolve()
                and not p.name.startswith("."))
     sources, notes, fx_table = [], [], None
+    set_aside: list[str] = []      # files skipped as an FX table or labels; one may be the only transaction file
     window_years: list[tuple[int, int]] = []
     fx_sem_any = None
     consistency_groups: list[str] = []
@@ -393,17 +394,25 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         if {"record_id", "include", "exclusion_reason"} <= low and len(df.columns) <= 12 and len(df) <= 5:
             notes.append(f"{p.name}: looks like the output template; skipped")
             continue
-        if {"currency"} <= low and any("rate" in c or "per" in c for c in low) and len(df) < 5000 and \
-                any("month" in c or "date" in c or "period" in c for c in low):
+        named = bool(files)          # a file named in --files is always a transaction file
+        rate_cols = [c for c in df.columns if re.search(r"(?i)\brate\b|units[\s_]*per|per[\s_]*(usd|eur|unit)\b", c)]
+        month_cols = [c for c in df.columns if re.search(r"(?i)\bmonth\b|\bperiod\b|\bdate\b", c)]
+        cur_cols = [c for c in df.columns if re.search(r"(?i)^(currency|ccy|curr)(\s*code)?$", c.strip())]
+        looks_fx = (not named and len(df.columns) <= 5 and cur_cols and rate_cols and month_cols
+                    and len(cand) > 1)
+        if looks_fx:
             cols = {c.lower(): c for c in df.columns}
-            rate_col = next(c for c in df.columns if "rate" in c.lower() or "per" in c.lower())
-            month_col = next(c for c in df.columns if any(k in c.lower() for k in ("month", "date", "period")))
+            cols["currency"] = cur_cols[0]
+            rate_col, month_col = rate_cols[0], month_cols[0]
             fx_table = {"table": p.name, "table_columns": {"currency": cols["currency"], "month": month_col,
                                                             "rate": rate_col}}
             notes.append(f"{p.name}: looks like an FX table (CHECK rate direction: units per reporting currency)")
+            set_aside.append(p.name)
             continue
-        if any(re.search(r"label|category_l1|seed", c.lower()) for c in df.columns) and len(df.columns) <= 8:
+        if not named and any(re.search(r"label|category_l1|seed", c.lower()) for c in df.columns) \
+                and len(df.columns) <= 8:
             notes.append(f"{p.name}: looks like a labels file; not used as input (add under classification.labels if wanted)")
+            set_aside.append(p.name)
             continue
         prof = profile_columns(df)
         h = heuristic_roles(prof)
@@ -506,8 +515,12 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         if fx_sem:
             fx_sem_any = fx_sem
         sources.append(src)
+    if not sources and len(set_aside) == 1 and not files:
+        # the only data file left must be the transactions, whatever its columns suggest
+        return draft_config(data, taxonomy, out, company, use_llm, files=set_aside)
     if not sources:
-        raise ValueError("no transaction file found")
+        raise ValueError(f"no transaction file found among {[p.name for p in cand]}; name it with "
+                         f"--files <file>, or start from configs/company_c_template.yaml")
 
     # tree paths for context
     lv = tax_block.get("level_columns") or []

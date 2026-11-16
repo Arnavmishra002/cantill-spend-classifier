@@ -50,10 +50,12 @@ def build_output(df: pd.DataFrame, tax: Taxonomy, columns: list[str]) -> pd.Data
 
 
 def sidecar_path(out_path: Path, suffix: str) -> Path:
-    """Audit/report files always go to <repo>/out/ (git-ignored), never next to a
-    submission file: the audit holds raw descriptions, which are confidential."""
+    """Audit and report files go to <repo>/out/ (git-ignored), never next to a
+    submission file: the audit holds raw descriptions, which are confidential.
+    SPENDCUBE_SIDECAR_DIR overrides the folder; the tests point it at a temp folder."""
+    import os
     from .paths import REPO_ROOT
-    d = REPO_ROOT / "out"
+    d = Path(os.environ["SPENDCUBE_SIDECAR_DIR"]) if os.environ.get("SPENDCUBE_SIDECAR_DIR") else REPO_ROOT / "out"
     d.mkdir(parents=True, exist_ok=True)
     return d / f"{Path(out_path).stem}{suffix}"
 

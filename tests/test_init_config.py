@@ -125,3 +125,40 @@ def test_real_style_file_joins_text_maps_dates_and_window(tmp_path):
     assert src["dayfirst"] is False and cfg["dates"]["dayfirst"] is False
     lo, hi = cfg["dates"]["valid_window_years"]
     assert lo <= 2012 and 2014 <= hi <= 2015
+
+
+def test_small_invoice_file_with_currency_rate_and_date_is_not_an_fx_table(tmp_path):
+    n = 3000
+    pd.DataFrame({
+        "Line ID": [f"L{i}" for i in range(n)], "Supplier": ["Acme Ltd", "Beta GmbH"] * (n // 2),
+        "Description": ["valve 2in", "pump seal"] * (n // 2), "Invoice Date": ["2025-03-01"] * n,
+        "Currency": ["EUR", "USD"] * (n // 2), "FX Rate": ["0.92", "1"] * (n // 2), "Amount": ["100.00"] * n,
+        "Operator": ["x"] * n, "Period": ["2025-03"] * n,
+    }).to_csv(tmp_path / "invoice_lines.csv", index=False)
+    pd.DataFrame({"L1": ["Equipment"], "L2": ["Valves"]}).to_csv(tmp_path / "tree.csv", index=False)
+    for files in (None, ["invoice_lines.csv"]):
+        cfg = yaml.safe_load(draft_config(str(tmp_path), "tree.csv", str(tmp_path / "c.yaml"), use_llm=False,
+                                          files=files).read_text())
+        cols = cfg["sources"][0]["columns"]
+        assert cols["amount"] == "Amount" and cols["currency"] == "Currency" and cols["fx_rate"] == "FX Rate"
+        assert "table" not in (cfg.get("fx") or {})
+
+
+def test_narrow_fx_table_next_to_invoices_is_used_as_fx(tmp_path):
+    pd.DataFrame({"Line ID": ["A", "B"] * 50, "Supplier": ["X", "Y"] * 50, "Description": ["bolt", "nut"] * 50,
+                  "Invoice Date": ["2025-01-02"] * 100, "Currency": ["EUR"] * 100, "Amount": ["5"] * 100}
+                 ).assign(**{"Line ID": [f"L{i}" for i in range(100)]}).to_csv(tmp_path / "lines.csv", index=False)
+    pd.DataFrame({"currency": ["EUR", "GBP"], "month": ["2025-01", "2025-01"], "units_per_usd": ["0.95", "0.8"]}
+                 ).to_csv(tmp_path / "fx.csv", index=False)
+    pd.DataFrame({"L1": ["A"], "L2": ["B"]}).to_csv(tmp_path / "tree.csv", index=False)
+    cfg = yaml.safe_load(draft_config(str(tmp_path), "tree.csv", str(tmp_path / "c.yaml"), use_llm=False).read_text())
+    assert cfg["fx"]["table"] == "fx.csv" and len(cfg["sources"]) == 1
+
+
+def test_only_data_file_is_used_even_if_it_looks_like_labels(tmp_path):
+    pd.DataFrame({"Line ID": [f"L{i}" for i in range(50)], "Vendor": ["Acme"] * 50, "Seed note": ["x"] * 50,
+                  "Item": ["gloves"] * 50, "Date": ["2025-01-05"] * 50, "Amount": ["12.5"] * 50}
+                 ).to_csv(tmp_path / "lines.csv", index=False)
+    pd.DataFrame({"L1": ["A"], "L2": ["B"]}).to_csv(tmp_path / "tree.csv", index=False)
+    cfg = yaml.safe_load(draft_config(str(tmp_path), "tree.csv", str(tmp_path / "c.yaml"), use_llm=False).read_text())
+    assert cfg["sources"][0]["columns"]["amount"] == "Amount"

@@ -91,3 +91,39 @@ def test_offline_calibration_is_monotone_and_bounded():
     p = cal.predict("retrieval", s, np.zeros(50))
     assert (np.diff(p) >= -1e-12).all() and p.min() >= 0.0 and p.max() <= 1.0
     assert cal.predict("unknown-family", [0.3], [0.123])[0] == 0.123   # falls back
+
+
+def test_reporting_currency_lines_are_not_flagged_public_table(tmp_path):
+    df = _frame([{"amount": "50", "currency": "USD", "date": "2024-03-10"},
+                 {"amount": "50", "currency": "EUR", "date": "2024-03-10"}])
+    out = clean(df, _cfg(), tmp_path)
+    assert out.loc[0, "fx_source"] == "reporting" and "FX_PUBLIC_TABLE" not in out.loc[0, "flags"]
+    assert "FX_PUBLIC_TABLE" in out.loc[1, "flags"]
+
+
+def test_high_inflation_rate_from_posting_month_is_accepted(tmp_path):
+    # client table: ARS from 100 to 1,000 units per USD over 33 months
+    months = pd.date_range("2022-01-01", "2024-10-01", freq="MS")
+    pd.DataFrame({"currency": "ARS", "month": months.strftime("%Y-%m"),
+                  "units_per_usd": np.geomspace(100, 1000, len(months)).round(2)}).to_csv(tmp_path / "fx.csv",
+                                                                                           index=False)
+    rows = [{"amount": "990000", "currency": "ARS", "date": "2022-01-20", "posting_date": "2024-10-05",
+             "fx_rate": "990"},                                   # booked at the posting month
+            {"amount": "1000", "currency": "EUR", "date": "2024-03-10", "posting_date": "2024-03-20",
+             "fx_rate": "18.6"}]                                  # another currency's rate: still rejected
+    df = _frame(rows)
+    cfg = _cfg({"table": "fx.csv"})
+    cfg["sources"][0]["columns"]["posting_date"] = "posting_date"
+    cfg["dates"] = {**cfg.get("dates", {}), "max_days_before_posting": 1100}
+    out = clean(df, cfg, tmp_path)
+    assert out.loc[0, "fx_source"] == "line" and out.loc[0, "spend_rc"] == pytest.approx(1000, rel=0.01)
+    assert "FX_RATE_REJECTED" in out.loc[1, "flags"]
+
+
+def test_stale_public_month_does_not_override_a_plausible_line_rate(tmp_path):
+    # the shipped table stops early for some currencies; a 2024 ARS line rate must stand
+    df = _frame([{"amount": "900000", "currency": "ARS", "date": "2024-06-10", "fx_rate": "900"},
+                 {"amount": "450000", "currency": "ARS", "date": "2024-06-12"}])
+    out = clean(df, _cfg(), tmp_path)
+    assert out.loc[0, "fx_source"] == "line" and out.loc[0, "spend_rc"] == pytest.approx(1000, rel=0.01)
+    assert out.loc[1, "fx_source"] == "file_median" and out.loc[1, "spend_rc"] == pytest.approx(500, rel=0.01)

@@ -1,0 +1,134 @@
+# Company C config template. Use it only if `run.py init-config` fails or drafts something unusable.
+#
+# How to use:
+#   cp configs/company_c_template.yaml configs/company_c.yaml
+#   Replace every CHANGE_ME with a real file or column name from the C files.
+#   Delete any line under `columns` whose column does not exist in the file.
+#   python run.py check-config --config configs/company_c.yaml --data data/C
+#   python run.py --config configs/company_c.yaml --data data/C --out submission/arnav_mishra__C.csv --max-llm-cost 50
+#
+# A column named here that is missing from the file stops the run with one ERROR line naming it.
+
+company: C
+reporting_currency: USD          # the currency the spend column is reported in
+search_dirs: []                  # the --data folder is always searched first
+
+taxonomy:
+  file: CHANGE_ME_tree.csv       # a file name or a pattern such as "*tree*.csv"
+  format: wide                   # wide: one column per level. parent_child: id and parent id columns
+  level_columns: [CHANGE_ME_L1, CHANGE_ME_L2, CHANGE_ME_L3, CHANGE_ME_L4]   # in order, top level first
+  # For format parent_child, use these instead of level_columns:
+  # id_column: CHANGE_ME
+  # parent_column: CHANGE_ME
+  # name_column: CHANGE_ME
+
+sources:
+- name: lines
+  file: [CHANGE_ME_lines.csv]    # the invoice lines file
+  record_id:
+    column: CHANGE_ME_line_id    # unique per row; becomes record_id in the output
+  amount_type: net               # gross if the amount includes VAT or sales tax
+  # tax_rate_default: 0.0        # only for gross amounts: the rate used when the tax rate is blank
+  columns:
+    amount: CHANGE_ME_amount
+    date: CHANGE_ME_invoice_date
+    supplier_name: CHANGE_ME_supplier_name
+    description: CHANGE_ME_description        # several text columns can be listed: [col1, col2]
+    # Optional. Delete any line whose column does not exist.
+    supplier_id: CHANGE_ME_supplier_id
+    invoice_number: CHANGE_ME_invoice_number
+    invoice_line: CHANGE_ME_line_number
+    posting_date: CHANGE_ME_posting_date
+    item_code: CHANGE_ME_item_code
+    quantity: CHANGE_ME_quantity
+    currency: CHANGE_ME_currency
+    fx_rate: CHANGE_ME_fx_rate
+    status: CHANGE_ME_status
+    gl_account: CHANGE_ME_gl_account
+    gl_description: CHANGE_ME_gl_description
+    po_number: CHANGE_ME_po_number
+    tax_rate: CHANGE_ME_tax_rate              # only with amount_type gross
+  status_map:                    # lower case values as they appear in the status column
+    include: [paid, approved, posted, complete, completed, closed]
+    CANCELLED: [cancelled, canceled, void, voided, reversed]
+    NOT_APPROVED: [rejected, on hold, pending, draft, disputed, submitted, open]
+    unknown_status_outcome: NOT_APPROVED
+
+exclusion_precedence: [CANCELLED, NOT_APPROVED, NON_PROCUREMENT, DUPLICATE]
+
+non_procurement:
+- name: intercompany_text
+  field: description
+  pattern: (?i)\b(intercompany|inter-company|inter company|interco|i/c (charge|recharge|payable))\b
+- name: tax_lines
+  field: description
+  pattern: (?i)^\s*(accrued[\s-]*)?((state\s*(&|and)\s*local\s+tax(es)?)|(sales\s*(&\s*use\s*)?tax(\s+expense)?)|(gst|vat|igst|cgst|sgst|tds|withholding tax|wht)(\s+(input|output|payable|paid|amount|adjustment))?)\s*-?\s*[\d.%]*\s*$
+- name: finance_and_other_non_supplier
+  field: description
+  pattern: (?i)\b(interest (charge|expense|payment|on loan)s?|bank (charge|fee)s?|royalt(y|ies)|dividends?|loan repayment|revenue share|partner billing|penalty interest|salary|salaries|payroll|donation)\b
+
+duplicates:
+  within_source: true
+  fuzzy: true
+
+cross_source:
+  enabled: false
+
+dates:
+  dayfirst: false                # true if dates look like 31/01/2025, false if 01/31/2025
+  valid_window_years: [2015, 2027]
+
+dedupe:
+  supplier:
+    use_supplier_id: true
+    fuzzy_threshold: 92
+  item:
+    use_item_code: true
+    fuzzy_threshold: 95
+
+classification:
+  company_context: "CHANGE_ME: one or two sentences on the industry and what the company buys."
+  consistency:
+    group_fields: []
+    strong: 0.8
+    weak: 0.7
+    share: 0.7
+  labels: null
+  llm:
+    enabled: true
+    primary: {vendor: anthropic, model: claude-opus-5-5, effort: low}
+    second: {vendor: anthropic, model: claude-sonnet-5-5, effort: low}
+    judge: {vendor: anthropic, model: claude-opus-5-5, effort: low}
+    tail: {vendor: anthropic, model: claude-sonnet-5-5, effort: low}
+    fallbacks:
+    - {vendor: anthropic, model: claude-sonnet-5-5, effort: low}
+    primary_spend_share: 0.95
+    shortlist_above_leaves: 400
+    shortlist_size: 25
+    shortlist_batch_cap: 150
+    batch_size: 25
+    concurrency: 16
+    low_confidence_threshold: 0.5
+    vote_threshold: 0.7
+    second_max_units: 1500
+    second_top_spend_share: 0.5
+    second_top_spend_max_units: 400
+    max_units: 20000
+    cost_cap_usd: 60.0
+    supplier_profiles: true
+    scope_notes: true
+  embeddings:
+    provider: lsa
+    dim: 256
+
+output:
+  template: output_template.csv
+
+fx:
+  # units_per_reporting: the rate is foreign units per 1 USD (EUR about 0.92).
+  # reporting_per_unit: the rate is USD per 1 foreign unit (EUR about 1.09). Each line is checked either way.
+  rate_semantics: units_per_reporting
+  ignore_rate_for_reporting_currency: true
+  sanity_band: [0.33, 3.0]
+  # table: CHANGE_ME_fx.csv     # only if the email ships an FX table
+  # table_columns: {currency: CHANGE_ME, month: CHANGE_ME, rate: CHANGE_ME}

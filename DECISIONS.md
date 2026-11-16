@@ -53,7 +53,10 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
 
 15. USD lines ignore their rate column. 1,279 of them carry about 17 to 19, which is the MXN book rate.
 16. Line rates are checked against a reference rate. A rate more than three times away is replaced and flagged
-    (60 lines). A rate on the inverse base is detected by comparing both readings and is inverted.
+    (59 lines). A rate on the inverse base is detected by comparing both readings and is inverted. A rate that
+    matches the table for any month from the invoice date to the posting date is accepted, because a line can be
+    booked at the posting month and a high-inflation currency such as ARS can move more than three times in that
+    span. This changed one B line by 0.10 USD after the build output was committed.
 17. Missing rates use the FX table for the invoice month, or the posting month when the invoice date is broken or
     implausible, or the nearest month in the table.
 18. No status column. 10,322 lines have no paid date, and document types include CA, Z6, PD and PR. A line posted to
@@ -75,7 +78,10 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
 24. FX without a usable rate. The repository ships `spendcube/data/fx_monthly_usd.csv`: ECB monthly average rates
     (2018 to October 2026) crossed into units per USD, plus official fixed pegs. Order of sources: the line's own
     rate, the client's table, this table, then the median of the file's own rates. A client table on the inverse base
-    is inverted. Only a currency unknown to every source gets spend 0, flagged `NO_FX_RATE`.
+    is inverted. Only a currency unknown to every source gets spend 0, flagged `NO_FX_RATE`. A table month more
+    than 95 days from the line's date is stale (the shipped table stops in 2020 for ARS): it never judges a line
+    rate and fills a rate only after the file's own rates. `FX_PUBLIC_TABLE` marks only lines in another currency
+    than the reporting one that took a public rate.
 25. Supplier de-duplication: legal suffixes stripped, OCR repair, a key without spaces, union-find over name, ID and
     tax ID, fuzzy matching with conservative thresholds. A name with more than 3 IDs (sundry, one-time vendor, tax
     office) or an ID with more than 3 unrelated names never links suppliers. On A without labels, precision and
@@ -87,7 +93,10 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     about 2,350 expected copies.
 28. init-config. Column roles come from headers and values and are checked by Claude when the API is reachable.
     Supplier No., Vendor ID, Vendor # and Vendor Code map to `supplier_id`. All item text columns are joined. The
-    day and month order and the plausible year window come from the values. Statuses are mapped by keyword.
+    day and month order and the plausible year window come from the values. Statuses are mapped by keyword. A file
+    is read as an FX table only when it has 5 columns or fewer, with currency, rate and month columns, and another
+    data file exists. A file named with `--files`, or the only data file, is always read as transactions. If
+    init-config still fails, `configs/company_c_template.yaml` is a complete config to fill in by hand.
 
 ## Classification
 

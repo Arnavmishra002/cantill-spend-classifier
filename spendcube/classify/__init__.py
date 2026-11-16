@@ -380,9 +380,9 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
         source[rest] = "retrieval"
         # propagate supplier / account mix to weak units
         _propagate(units, probs, conf, source, rest & units["weak"].values)
-        top2 = np.sort(probs[rest], axis=1)[:, -2:]
-        calib_p1[rest] = top2[:, 1]
-        calib_margin[rest] = top2[:, 1] - top2[:, 0]
+        srt_p = np.sort(probs[rest], axis=1)
+        calib_p1[rest] = srt_p[:, -1]
+        calib_margin[rest] = srt_p[:, -1] - (srt_p[:, -2] if srt_p.shape[1] > 1 else 0.0)
     srt = np.sort(sim, axis=1)
     units["calib_p1"] = calib_p1
     units["calib_margin"] = calib_margin

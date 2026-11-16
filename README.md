@@ -50,6 +50,9 @@ python run.py check-config --config configs/company_c.yaml --data data/C
 python run.py --config configs/company_c.yaml --data data/C --out submission/arnav_mishra__C.csv
 ```
 
+If `init-config` fails on C, copy `configs/company_c_template.yaml` to `configs/company_c.yaml` and fill in the
+CHANGE_ME names (RUNBOOK.md, "If something breaks").
+
 Useful flags: `--no-llm` (offline, no API calls), `--require-llm` (stop with exit code 3 if no Claude model
 answers), `--max-llm-cost 5` (USD cap for the run), `--no-labels` (zero-shot), `--log-level DEBUG`.
 
@@ -57,7 +60,7 @@ Every run starts with a health check of each Claude model it will use and ends w
 template columns and order, one row per input record, unique ids, valid exclusion codes, categories that exist in
 the tree, and spend that reconciles with the input. A failed check stops the run with exit code 2. A config column
 that is missing from the input file prints one error line and exits with code 2. Next to each output,
-`out/<name>_audit.csv` explains every row (rule, matched record, flags, FX source, classification layer) and
+`out/<name>_audit.csv` (or the folder in `SPENDCUBE_SIDECAR_DIR`) explains every row (rule, matched record, flags, FX source, classification layer) and
 `out/<name>_report.json` summarises the run. Both are git-ignored because they contain raw descriptions.
 
 ## How to change things (config only)
@@ -88,6 +91,7 @@ python -m pytest -q
 run.py                       command line: run, init-config, check-config, evaluate, calibrate
 configs/company_a.yaml       everything specific to company A
 configs/company_b.yaml       everything specific to company B
+configs/company_c_template.yaml  fallback config for an unseen company, filled in by hand
 spendcube/
   ingest.py clean.py spend_rules.py match.py dedupe.py export.py validate.py
   taxonomy.py paths.py textnorm.py config.py pipeline.py evaluate.py init_config.py check.py calibrate.py
