@@ -177,10 +177,28 @@ def _fresh_slice_run(cfg, config, data_dir, outdir, tag, use_llm, cache_dir, fra
         d.mkdir(parents=True)
     rng = np.random.default_rng(seed)
     fresh_ids = set()
+    # Keep a purchase's records together (a new drop is assumed self-contained):
+    # split by the first long number in the PO columns, else by invoice number, else by row.
+    def group_keys(t: pd.DataFrame, s: dict) -> pd.Series:
+        cols = s.get("columns", {})
+        key = pd.Series("", index=t.index)
+        for f in ("po_number", "po_reference", "invoice_number"):
+            c = cols.get(f)
+            if isinstance(c, list):
+                c = c[0]
+            if c and c in t.columns:
+                k = t[c].astype(str).str.extract(r"(\d{6,})")[0].fillna("")
+                if f == "invoice_number":
+                    k = t[c].astype(str).str.replace(r"[^0-9A-Za-z]", "", regex=True)
+                key = key.where(key != "", k)
+        return key.where(key != "", "ROW" + t.index.astype(str))
     for s in cfg["sources"]:
         p = resolve_file(s["file"], cfg, data_dir, dirs=[data_dir])
         t = read_table(p)
-        m = rng.random(len(t)) < frac
+        g = group_keys(t, s)
+        # hash-based so the same PO lands on the same side in every source file
+        import hashlib
+        m = g.map(lambda k: int(hashlib.md5(f"{seed}|{k}".encode()).hexdigest()[:8], 16) / 0xFFFFFFFF < frac).values
         t[~m].to_csv(old / p.name, index=False)
         t[m].to_csv(fresh / p.name, index=False)
         rid = s["record_id"]["column"] if isinstance(s["record_id"], dict) else s["record_id"]

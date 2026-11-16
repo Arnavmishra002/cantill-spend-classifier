@@ -5,9 +5,11 @@ data/
 *.xlsx
 *.xls
 *.parquet
-# Any CSV outside submission/ is treated as data and ignored
+# Any CSV is treated as data and ignored, except the named deliverables in submission/
 *.csv
-!submission/*.csv
+!submission/arnav_mishra__*.csv
+submission/*_audit.csv
+*_report.json
 
 # Run outputs and caches
 out/
@@ -26,6 +28,7 @@ venv/
 # Secrets
 .env
 .env.*
+!.env.example
 
 # OS / editor
 .DS_Store

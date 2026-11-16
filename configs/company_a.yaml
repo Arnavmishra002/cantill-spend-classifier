@@ -117,7 +117,8 @@ classification:
     vote_threshold: 0.7
     max_units: 6000
     cost_cap_usd: 4.0
-  embeddings: {provider: auto, gemini_model: gemini-embedding-001, dim: 256}
+  # kNN hints use local LSA vectors; Gemini embeddings are opt-in (free-tier quota is too slow for bulk)
+  embeddings: {provider: lsa, gemini_model: gemini-embedding-001, dim: 256, time_budget_sec: 120}
 
 output:
   template: output_template.csv

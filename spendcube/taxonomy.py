@@ -107,6 +107,17 @@ def _level_number(col: str):
     return None
 
 
+def guess_parent_child_columns(cols):
+    low = [(c, c.strip().lower()) for c in cols]
+    pc = next((c for c, l in low if "parent" in l), None)
+    idc = next((c for c, l in low if c != pc and l in ("id", "node_id", "code", "node", "category_id",
+                                                           "node_code", "category_code")), None) or \
+        next((c for c, l in low if c != pc and (l.endswith("id") or l.endswith("code"))), None)
+    nc = next((c for c, l in low if c not in (pc, idc) and any(k in l for k in ("name", "label", "title"))), None) or \
+        next((c for c, l in low if c not in (pc, idc) and "category" in l), None)
+    return idc, pc, nc
+
+
 def load_taxonomy(cfg: dict, data_dir: Path) -> Taxonomy:
     tcfg = cfg["taxonomy"]
     df = read_table(resolve_file(tcfg["file"], cfg, data_dir), sheet=tcfg.get("sheet"))
@@ -122,10 +133,10 @@ def load_taxonomy(cfg: dict, data_dir: Path) -> Taxonomy:
         else:
             fmt = "wide"
     if fmt == "parent_child":
-        lower = {c.lower(): c for c in df.columns}
-        idc = tcfg.get("id_column") or lower.get("id") or lower.get("node_id") or lower.get("code")
-        pc = tcfg.get("parent_column") or lower.get("parent_id") or lower.get("parent")
-        nc = tcfg.get("name_column") or lower.get("name") or lower.get("category") or lower.get("label")
+        idc, pc, nc = guess_parent_child_columns(df.columns)
+        idc = tcfg.get("id_column") or idc
+        pc = tcfg.get("parent_column") or pc
+        nc = tcfg.get("name_column") or nc
         if not (idc and pc and nc):
             raise ValueError(f"parent_child taxonomy needs id/parent/name columns; got {list(df.columns)}")
         name = dict(zip(df[idc], df[nc]))

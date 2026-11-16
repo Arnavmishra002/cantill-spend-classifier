@@ -12,7 +12,7 @@ from . import classify as clf
 from .clean import clean
 from .config import load_config
 from .dedupe import dedupe_items, dedupe_suppliers
-from .export import build_output, template_columns, write_outputs
+from .export import build_output, sidecar_path, template_columns, write_outputs
 from .ingest import ingest_all
 from .match import match_sources
 from .paths import REPO_ROOT
@@ -96,7 +96,8 @@ def run(config_path: str, data_dir: str, out_path: str, *, use_llm: bool = True,
     report["runtime_sec"] = round(time.time() - t0, 1)
     report["output"] = str(out_path)
     report["audit"] = str(audit)
-    rp = out_path.with_name(out_path.stem + "_report.json")
+    rp = sidecar_path(out_path, "_report.json")
+    report["report"] = str(rp)
     rp.write_text(json.dumps(_jsonable(report), indent=2, default=str))
     report["_df"], report["_out"], report["_tax"], report["_units"] = df, out, tax, cstats.get("_units")
     return report

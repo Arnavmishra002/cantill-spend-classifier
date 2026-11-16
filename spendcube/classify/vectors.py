@@ -105,7 +105,7 @@ class EmbeddingCache:
 
 
 def gemini_embed(texts: list[str], model: str, dim: int, cache: EmbeddingCache,
-                 task: str = "CLASSIFICATION") -> np.ndarray | None:
+                 task: str = "CLASSIFICATION", time_budget: float = 120.0) -> np.ndarray | None:
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
         return None
@@ -124,9 +124,13 @@ def gemini_embed(texts: list[str], model: str, dim: int, cache: EmbeddingCache,
         else:
             todo.append((i, t, k))
     B = 100
+    t0 = time.time()
     for s in range(0, len(todo), B):
+        if time.time() - t0 > time_budget:
+            log.warning("gemini embeddings over time budget (%ss); falling back to local vectors", time_budget)
+            return None
         chunk = todo[s:s + B]
-        for attempt in range(6):
+        for attempt in range(3):
             try:
                 r = client.models.embed_content(
                     model=model, contents=[t for _, t, _ in chunk],
@@ -137,7 +141,7 @@ def gemini_embed(texts: list[str], model: str, dim: int, cache: EmbeddingCache,
                     out[i] = v
                 break
             except Exception as e:  # rate limit / transient
-                wait = min(60, 2 ** attempt * 2)
+                wait = min(20, 2 ** attempt * 2)
                 log.warning("gemini embed failed (%s); retry in %ss", str(e)[:120], wait)
                 time.sleep(wait)
         else:
@@ -154,6 +158,7 @@ class DenseEncoder:
         self.provider = ecfg.get("provider", "auto")
         self.model = ecfg.get("gemini_model", "gemini-embedding-001")
         self.dim = int(ecfg.get("dim", 256))
+        self.time_budget = float(ecfg.get("time_budget_sec", 120))
         self.cache = EmbeddingCache(Path(cache_dir) / "embeddings.jsonl")
         self.sparse = SparseVectorizer().fit(corpus)
         n_comp = max(2, min(256, self.sparse.transform(corpus[:1]).shape[1] - 1, len(corpus) - 1))
@@ -167,7 +172,7 @@ class DenseEncoder:
 
     def encode(self, texts: list[str]) -> np.ndarray:
         if self.mode == "gemini":
-            v = gemini_embed(texts, self.model, self.dim, self.cache)
+            v = gemini_embed(texts, self.model, self.dim, self.cache, time_budget=self.time_budget)
             if v is not None:
                 return v
             self.mode = "lsa"

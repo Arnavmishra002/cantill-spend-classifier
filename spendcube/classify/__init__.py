@@ -358,6 +358,8 @@ def _profile_suppliers(llm, units: pd.DataFrame, cand, leaf_ids, tax) -> dict:
     for sk, g in cur.groupby("supplier_key", sort=False):
         if sk not in need or not sk:
             continue
+        if int((~g["weak"]).sum()) < 2:
+            continue  # nothing to learn: single line (it speaks for itself) or only blank text
         g = g.sort_values("spend", ascending=False)
         tot = float(g["spend"].sum()) or 1.0
         top = []

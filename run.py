@@ -48,7 +48,8 @@ def cmd_run(a):
     if llm:
         print(f"LLM         : {llm.get('calls', 0)} calls, ${llm.get('cost_usd', 0):.3f}, "
               f"cache hits {llm.get('cache_hits', 0)}")
-    print(f"runtime     : {rep['runtime_sec']}s   report: {Path(a.out).with_name(Path(a.out).stem + '_report.json')}")
+    print(f"runtime     : {rep['runtime_sec']}s")
+    print(f"audit/report: {rep['audit']}  {rep['report']}")
     return 0
 
 

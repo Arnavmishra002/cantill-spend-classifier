@@ -49,6 +49,15 @@ def build_output(df: pd.DataFrame, tax: Taxonomy, columns: list[str]) -> pd.Data
     return out[columns]
 
 
+def sidecar_path(out_path: Path, suffix: str) -> Path:
+    """Audit/report files always go to <repo>/out/ (git-ignored), never next to a
+    submission file: the audit holds raw descriptions, which are confidential."""
+    from .paths import REPO_ROOT
+    d = REPO_ROOT / "out"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{Path(out_path).stem}{suffix}"
+
+
 def write_outputs(df: pd.DataFrame, out: pd.DataFrame, path: Path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,6 +66,6 @@ def write_outputs(df: pd.DataFrame, out: pd.DataFrame, path: Path):
                               "match_cluster", "flags", "currency_norm", "fx_rate_used", "fx_source",
                               "amount_num", "net_amount", "spend_rc", "class_source", "node",
                               "unit_id", "supplier_name", "description"] if c in df.columns]
-    audit = path.with_name(path.stem + "_audit.csv")
+    audit = sidecar_path(path, "_audit.csv")
     df[audit_cols].to_csv(audit, index=False, encoding="utf-8")
     return audit

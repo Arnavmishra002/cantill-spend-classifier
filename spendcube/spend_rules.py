@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 
 import pandas as pd
 
@@ -70,8 +71,10 @@ def apply_non_procurement(df: pd.DataFrame, cfg: dict, stats: dict):
             log.warning("non_procurement rule %s skipped: %s", name, e)
             continue
         if "pattern" in r:
-            hit = s.str.contains(r["pattern"], flags=0 if r.get("case_sensitive") else re.I,
-                                 regex=True, na=False)
+            with warnings.catch_warnings():  # groups in user patterns are fine here
+                warnings.simplefilter("ignore", UserWarning)
+                hit = s.str.contains(r["pattern"], flags=0 if r.get("case_sensitive") else re.I,
+                                     regex=True, na=False)
         else:
             vals = {str(v).strip().lower() for v in r["values"]}
             hit = s.str.strip().str.lower().isin(vals)
@@ -101,6 +104,48 @@ def apply_within_source_duplicates(df: pd.DataFrame, cfg: dict, stats: dict):
         dup = sub.duplicated(cols, keep="first")
         stats[f"exact_duplicate_{s['name']}"] = _mark(df, m & dup.reindex(df.index, fill_value=False),
                                                       "DUPLICATE", "exact_duplicate")
+        if s.get("fuzzy_duplicates", dcfg.get("fuzzy", False)):
+            near = near_duplicates(df[m & ~dup.reindex(df.index, fill_value=False)], s, dcfg)
+            stats[f"near_duplicate_{s['name']}"] = _mark(df, pd.Series(df.index.isin(near), index=df.index) & m,
+                                                         "DUPLICATE", "near_duplicate")
+
+
+def near_duplicates(sub: pd.DataFrame, src: dict, dcfg: dict) -> list:
+    """Same invoice exported twice with different formatting: same normalised invoice
+    number (+ line number if the file has one), same net amount, same quantity and
+    near-identical text/supplier. Returns the index of every copy except the first."""
+    from rapidfuzz import fuzz
+
+    from .match import norm_invoice_number
+    from .textnorm import compact_key, norm_key
+    if "invoice_number" not in sub.columns or sub.empty:
+        return []
+    prefixes = dcfg.get("invoice_prefixes", ["TAX INV", "INV/", "INV", "SI-", "SI", "IN", "#"])
+    t = pd.DataFrame({
+        "inv": sub["invoice_number"].map(lambda x: norm_invoice_number(x, prefixes)),
+        "line": sub["invoice_line"].str.lstrip("0") if "invoice_line" in sub.columns else "",
+        "amt": sub["net_amount"].round(2),
+        "qty": sub["quantity_num"].round(4) if "quantity_num" in sub.columns else 0.0,
+        "txt": sub["description"].map(norm_key),
+        "sup": sub["supplier_name"].map(compact_key) if "supplier_name" in sub.columns else "",
+        "ord": sub["row_order"],
+    }, index=sub.index)
+    t = t[(t["inv"] != "") & t["amt"].notna()]
+    thr = float(dcfg.get("fuzzy_text_min", 90))
+    out = []
+    for _, g in t.groupby(["inv", "line", "amt", "qty"], sort=False, dropna=False):
+        if len(g) < 2:
+            continue
+        g = g.sort_values("ord")
+        reps = []
+        for i, r in g.iterrows():
+            same = any(fuzz.ratio(r["txt"], rt) >= thr and
+                       (not r["sup"] or not rs or fuzz.ratio(r["sup"], rs) >= 85) for rt, rs in reps)
+            if same:
+                out.append(i)
+            else:
+                reps.append((r["txt"], r["sup"]))
+    return out
 
 
 def rule_confidence(rule: str) -> float:
@@ -111,7 +156,7 @@ def rule_confidence(rule: str) -> float:
         return 0.99
     if "P1" in rule:
         return 0.97
-    if rule == "exported_twice":
+    if rule in ("exported_twice", "near_duplicate"):
         return 0.9
     if "P2" in rule:
         return 0.88

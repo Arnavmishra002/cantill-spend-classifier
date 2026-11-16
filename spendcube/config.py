@@ -83,7 +83,7 @@ DEFAULTS: dict[str, Any] = {
             "low_confidence_threshold": 0.75,
             "concurrency": 6,
         },
-        "embeddings": {"provider": "auto", "gemini_model": "gemini-embedding-001"},
+        "embeddings": {"provider": "lsa", "gemini_model": "gemini-embedding-001", "time_budget_sec": 120},
     },
     "output": {"template": None},
 }

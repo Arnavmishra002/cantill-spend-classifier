@@ -36,7 +36,8 @@ TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XOF XPF 
 
 # field -> header regex (higher score earlier in list)
 HEADER_HINTS = {
-    "record_id": [r"^(line|record|row|txn|transaction|invoice_line|entry)[\s_]?(id|key|no)$", r"^id$", r"line_id"],
+    "record_id": [r"^(line|record|row|txn|transaction|invoice[\s_]*line|entry)[\s_]?(id|key)$", r"^id$",
+                  r"line[\s_]*id", r"(record|row|line)[\s_]*(no|number|#)$"],
     "invoice_number": [r"inv(oice)?[\s_]*(no|num|number|#|id|ref)", r"^document[\s_]*(no|number)$", r"bill[\s_]*no"],
     "invoice_line": [r"inv(oice)?[\s_]*line", r"^line[\s_]*(no|num|number)$", r"^item[\s_]*no$"],
     "date": [r"inv(oice)?[\s_]*date", r"doc(ument)?[\s_]*date", r"bill[\s_]*date", r"^date$", r"txn[\s_]*date", r"transaction[\s_]*date"],
@@ -127,6 +128,8 @@ def heuristic_roles(prof: dict) -> dict:
                 v = p["ccy_rate"] if p["ccy_rate"] > 0.8 else -1
             elif f == "record_id":
                 v = 1.0 if p["unique_ratio"] > 0.999 and p["blank"] == 0 else -1
+            elif f in ("invoice_line", "po_item"):
+                v = 1.0 if p["unique_ratio"] < 0.5 else -1     # line numbers repeat across invoices
             elif f == "description":
                 v = min(p["avg_len"] / 30, 1.0) * p["alpha_rate"]
             elif f == "supplier_name":
@@ -140,7 +143,10 @@ def heuristic_roles(prof: dict) -> dict:
                 best = (c, sc)
         if best:
             cands[f] = best
-    # a column may serve only one role: keep the higher score
+    # a column may serve only one role: keep the higher score (a unique id column is
+    # always the record id first)
+    if "record_id" in cands:
+        cands["record_id"] = (cands["record_id"][0], cands["record_id"][1] + 10)
     used = {}
     for f, (c, sc) in sorted(cands.items(), key=lambda x: -x[1][1]):
         if c in used:
@@ -275,8 +281,11 @@ def _taxonomy_block(path: Path) -> dict:
     t = read_table(path)
     cols = list(t.columns)
     lower = {c.lower(): c for c in cols}
-    if any(k in lower for k in ("parent_id", "parent")):
-        block = {"file": path.name, "format": "parent_child"}
+    if any("parent" in k for k in lower):
+        from .taxonomy import guess_parent_child_columns
+        idc, pc, nc = guess_parent_child_columns(cols)
+        block = {"file": path.name, "format": "parent_child", "id_column": idc, "parent_column": pc,
+                 "name_column": nc}
         return block, t
     lvl = [c for c in cols if re.search(r"(?i)(level|lvl|\bl)[\s_-]?\d|l\d$|category[\s_]*l?\d", c)]
     desc = [c for c in cols if re.search(r"(?i)desc|definition|keywords|examples|scope", c)]
@@ -308,6 +317,12 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         df = read_table(p)
         df.columns = [clean_text(c) for c in df.columns]
         low = {c.lower() for c in df.columns}
+        if {"record_id", "include", "exclusion_reason", "supplier_key"} <= low or p.stem.endswith("_audit"):
+            notes.append(f"{p.name}: looks like an output of this tool; skipped")
+            continue
+        if {"record_id", "include", "exclusion_reason"} <= low and len(df.columns) <= 12 and len(df) <= 5:
+            notes.append(f"{p.name}: looks like the output template; skipped")
+            continue
         if {"currency"} <= low and any("rate" in c or "per" in c for c in low) and len(df) < 5000 and \
                 any("month" in c or "date" in c or "period" in c for c in low):
             cols = {c.lower(): c for c in df.columns}
@@ -347,6 +362,10 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             cur = df[roles["currency"]].astype(str).str.strip().str.upper()
             top = cur[cur != ""].value_counts()
             notes.append(f"{p.name}: currencies {top.head(8).to_dict()}")
+            foreign = [c for c in top.index if c != reporting]
+            if foreign and "fx_rate" not in roles:
+                notes.append(f"{p.name}: WARNING non-{reporting} currencies {foreign[:8]} but no rate column: "
+                             f"add an FX table under `fx.table` or those lines get spend 0 (flag NO_FX_RATE)")
         else:
             src["currency_default"] = reporting
             notes.append(f"{p.name}: no currency column -> assumed {reporting} (CHECK)")
@@ -379,7 +398,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         "sources": sources,
         "exclusion_precedence": ["CANCELLED", "NOT_APPROVED", "NON_PROCUREMENT", "DUPLICATE"],
         "non_procurement": [{k: v for k, v in r.items() if not k.startswith("_")} for r in np_rules],
-        "duplicates": {"within_source": True},
+        "duplicates": {"within_source": True, "fuzzy": True},
         "cross_source": {"enabled": False},
         "dates": {"dayfirst": True, "valid_window_years": [2015, 2030]},
         "dedupe": {"supplier": {"use_supplier_id": True, "fuzzy_threshold": 92},
@@ -396,7 +415,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                 "batch_size": 25, "concurrency": 6, "vote_threshold": 0.7,
                 "max_units": 20000, "cost_cap_usd": 8.0,
             },
-            "embeddings": {"provider": "auto", "gemini_model": "gemini-embedding-001", "dim": 256},
+            "embeddings": {"provider": "lsa", "gemini_model": "gemini-embedding-001", "dim": 256, "time_budget_sec": 120},
         },
         "output": {"template": "output_template.csv"},
     }
