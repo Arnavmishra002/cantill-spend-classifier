@@ -162,3 +162,33 @@ def test_a_status_column_without_any_status_word_is_not_used(tmp_path):
 def test_unrelated_values_from_claude_are_included():
     smap, unknown, notes = _status_map(["On Contract", "Paid"], llm={"On Contract": "unrelated", "Paid": "include"})
     assert set(smap["include"]) == {"on contract", "paid"} and not unknown
+
+
+def test_vague_and_reference_only_text():
+    from spendcube.classify import is_vague
+    from spendcube.textnorm import norm_key
+    for t in ["INV-123", "Misc", "Product", "as per quote", "PO 4500012345", "Q1 2024", "Invoice March 2025", ""]:
+        assert is_vague(norm_key(t)), t
+    for t in ["Monthly rent March", "A4 copier paper 80gsm", "Consulting fees", "Freight charges", "Dell 24in LED"]:
+        assert not is_vague(norm_key(t)), t
+
+
+def test_vague_lines_get_low_confidence_and_no_specific_guess(tmp_path):
+    tree = pd.DataFrame({"L1": ["Office", "Office", "IT", "Other"], "L2": ["Stationery", "Paper", "Laptops", "Other"]})
+    tree.to_csv(tmp_path / "tree.csv", index=False)
+    rows = [("L1", "Staples Inc", "ballpoint pens blue"), ("L2", "Staples Inc", "stapler and staples"),
+            ("L3", "Staples Inc", "highlighter pens"), ("L4", "Staples Inc", "INV-123"),
+            ("L5", "", "Misc"), ("L6", "", "as per quote"), ("L7", "", "Product"),
+            ("L8", "Dell", "Latitude laptop 16GB")]
+    pd.DataFrame(rows, columns=["id", "vendor", "text"]).assign(amt="100.00").to_csv(tmp_path / "lines.csv", index=False)
+    cfg = {"company": "V", "taxonomy": {"file": "tree.csv", "level_columns": ["L1", "L2"]},
+           "sources": [{"name": "s", "file": "lines.csv", "record_id": {"column": "id"},
+                        "columns": {"supplier_name": "vendor", "description": "text", "amount": "amt"}}]}
+    (tmp_path / "c.yaml").write_text(yaml.safe_dump(cfg))
+    rep, out = _run(tmp_path)
+    o = out.set_index("record_id")
+    for rid in ("L5", "L6", "L7"):                       # no text, no supplier: the catch-all leaf
+        assert o.loc[rid, "l1"] == "Other" and float(o.loc[rid, "confidence"]) <= 0.3
+    assert o.loc["L4", "l2"] == "Stationery"             # the supplier's other lines decide
+    rv = rep["review"]
+    assert rv["lines"] >= 3 and 0 < rv["spend_share"] <= 1 and rv["coverage_l2_spend"] == 1.0

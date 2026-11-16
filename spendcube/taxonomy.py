@@ -61,6 +61,22 @@ class Taxonomy:
             for k in pick:
                 k.general = True
 
+    def catch_all_leaf(self) -> str | None:
+        """A leaf for spend the text cannot place: a top-level branch named Other,
+        Miscellaneous, Unclassified and the like, followed down through its general or
+        same-named children. None when the tree has no such branch."""
+        rx = re.compile(r"(?i)\b(other|others|misc|miscellaneous|unclassified|uncategori[sz]ed|not elsewhere|"
+                        r"sundry|various|general)\b")
+        tops = [n for n in self.nodes.values() if n.depth == 1 and rx.search(n.name)]
+        for top in tops:
+            n = top
+            while n.children:
+                kids = [self.nodes[c] for c in n.children]
+                pick = [k for k in kids if k.general or rx.search(k.name)] or kids
+                n = pick[0]
+            return n.id
+        return None
+
     def general_sibling(self, nid: str) -> str | None:
         """The general leaf of nid's branch, if nid is a specific leaf in such a branch."""
         n = self.nodes[nid]

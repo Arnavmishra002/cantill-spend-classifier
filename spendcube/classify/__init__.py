@@ -131,8 +131,30 @@ def _supervised_text(u: pd.DataFrame) -> list[str]:
     return toks
 
 
+# Words that say nothing about what was bought. A description made only of these, of
+# numbers and codes (INV-123, PO 4500012345, Q1 2024) is no evidence of a category.
+VAGUE_WORDS = set("""
+A AN AND AS AT BY FOR FROM IN OF ON PER THE TO WITH SEE VIDE REF REFERENCE NO NR NUM NUMBER
+ATTACHED ATTACHMENT ENCLOSED QUOTE QUOTATION QTN ESTIMATE INVOICE INVOICES INV BILL BILLS BILLING
+PO ORDER PURCHASE PURCHASES DOC DOCUMENT STATEMENT ACCOUNT ACC AMOUNT AMT PAYMENT PAYMENTS
+CHARGE CHARGES FEE FEES COST COSTS EXPENSE EXPENSES AGREEMENT CONTRACT JOB PROJECT WORK
+MISC MISCELLANEOUS VARIOUS SUNDRY SUNDRIES OTHER OTHERS GENERAL GOODS SERVICE SERVICES ITEM ITEMS
+PRODUCT PRODUCTS MATERIAL MATERIALS PART PARTS SUPPLY SUPPLIES NA N NONE TBD TBC NIL TEXT
+DESCRIPTION LINE ADJUSTMENT MONTH MONTHLY PERIOD WEEK YEAR QUARTER JAN FEB MAR APR MAY JUN JUL AUG
+SEP SEPT OCT NOV DEC JANUARY FEBRUARY MARCH APRIL JUNE JULY AUGUST SEPTEMBER OCTOBER NOVEMBER
+DECEMBER
+""".split())
+
+
+def is_vague(desc_key: str) -> bool:
+    """True when every token of the normalised description is a vague word or contains
+    a digit (an invoice, order or reference number)."""
+    toks = desc_key.split()
+    return all(t in VAGUE_WORDS or any(ch.isdigit() for ch in t) for t in toks)
+
+
 def is_weak(desc_key: str) -> bool:
-    return (desc_key in GENERIC_DESCRIPTIONS) or len(desc_key.replace(" ", "")) < 3
+    return (desc_key in GENERIC_DESCRIPTIONS) or len(desc_key.replace(" ", "")) < 3 or is_vague(desc_key)
 
 
 # ---------------------------------------------------------------------- main
@@ -380,6 +402,28 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
         source[rest] = "retrieval"
         # propagate supplier / account mix to weak units
         _propagate(units, probs, conf, source, rest & units["weak"].values)
+        # A weak unit nothing could be propagated to has no evidence in its own text. Its
+        # retrieval guess rests on the supplier name, account or context alone, so it keeps
+        # that guess with low confidence; with none of those it goes to the catch-all leaf
+        # (or the general leaf of the guessed branch).
+        cap = float(ccfg.get("vague_confidence_cap", 0.3))
+        catch_all = tax.catch_all_leaf()
+        other = (units["supplier_name"].fillna("").astype(str).str.contains(r"[A-Za-z]{3,}") |
+                 units["gl_description"].fillna("").astype(str).str.contains(r"[A-Za-z]{3,}") |
+                 units["context"].fillna("").astype(str).str.contains(r"[A-Za-z]{3,}")).values
+        nv = np.where(rest & units["weak"].values & (source == "retrieval"))[0]
+        n_moved = 0
+        for i in nv:
+            if not other[i]:
+                target = catch_all or tax.general_sibling(leaf_ids[int(probs[i].argmax())])
+                if target:
+                    probs[i] = 0.0
+                    probs[i, col[target]] = 1.0
+                    n_moved += 1
+            conf[i] = min(conf[i], cap)
+            source[i] = "retrieval+vague"
+        stats["vague_offline_units"] = int(len(nv))
+        stats["vague_to_catch_all_units"] = n_moved
         srt_p = np.sort(probs[rest], axis=1)
         calib_p1[rest] = srt_p[:, -1]
         calib_margin[rest] = srt_p[:, -1] - (srt_p[:, -2] if srt_p.shape[1] > 1 else 0.0)

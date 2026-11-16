@@ -68,6 +68,12 @@ def cmd_run(a):
     for w in rep.get("warnings") or []:
         print(f"WARNING     : {w}")
     print(f"class source: {rep['classification'].get('class_source_lines')}")
+    rv = rep.get("review") or {}
+    if rv:
+        print(f"review      : {rv['lines']} included lines below confidence {rv['threshold']} "
+              f"({rv['line_share']:.1%} of lines, {rv['spend_share']:.1%} of spend) for human review")
+        print(f"coverage    : {rv['coverage_l2_spend']:.1%} of spend classified to level 2 or deeper, "
+              f"{rv['confident_l2_spend']:.1%} at confidence {rv['threshold']} or more")
     if health.get("enabled") and not health.get("usable"):
         print("LLM         : NOT USED. " + health.get("message", "no provider answered"))
     elif not health.get("enabled"):

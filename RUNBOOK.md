@@ -93,6 +93,7 @@ missing.
 - [ ] Exclusion counts look plausible, and no summary line says "WARNING : status rules exclude ...".
 - [ ] The reconcile line shows input = included + excluded.
 - [ ] In `out/arnav_mishra__C_report.json`, `classification.class_source_lines` is mostly `llm`, not `retrieval`.
+- [ ] Note the `review` line of the C summary (lines and spend below confidence 0.7) for the Round 2 walkthrough.
 - [ ] Spot-check 10 lines of C in `out/arnav_mishra__C_audit.csv` (description against l1 to l4).
 
 If the C config needs a fix (a wrong column), edit only `configs/company_c.yaml` and re-run step 3 for C.

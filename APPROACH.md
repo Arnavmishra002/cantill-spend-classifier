@@ -18,7 +18,8 @@ Identical lines are classified once. With labels, label memory and a logistic re
 The rest go to Claude with the whole tree, a scope note per leaf written from the company's unlabelled lines, and a
 category profile per supplier. Opus takes the units holding the top 95% of spend, Sonnet the rest; Sonnet gives a
 second opinion on uncertain and high-spend units and Opus judges disagreements. Output is limited to valid leaf IDs.
-Without a key, offline retrieval with calibrated confidence classifies every line.
+Without a key, offline retrieval with calibrated confidence classifies every line. Vague text such as "Misc" or
+an invoice number counts as no evidence and gets low confidence.
 
 ## Measured accuracy (labels hidden)
 | Setting | L1 | L2 | L3 |
@@ -33,7 +34,9 @@ Without a key, offline retrieval with calibrated confidence classifies every lin
 California L4: 56.4% by line, 59.6% by log spend; offline on 2,000 lines it was 33.6%. The top 1% of California
 lines hold 94% of spend, so plain spend weighting would rest on a few lines. Data: Purchase Order Data, California
 Department of General Services, data.ca.gov ("No Restrictions on Public Use"); `scripts/california_check.py`.
-Exclusions agree 100% with B's 3,000 seeds. Suppliers on A without labels: precision and recall 1.00. Items on the
+Lines below confidence 0.7 form a review queue printed with every run: 3.7% of spend on A's build output, 48% on
+B's (mostly lines without a description) and 1.7% on the California run; C's share is in its run summary. Every
+included line gets a leaf, so coverage at level 2 or deeper is 100% of spend. Exclusions agree 100% with B's 3,000 seeds. Suppliers on A without labels: precision and recall 1.00. Items on the
 A2 simulation: pairwise F1 0.994.
 
 ## Runtime and cost

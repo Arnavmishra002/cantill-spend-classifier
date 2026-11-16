@@ -12,7 +12,7 @@ from . import classify as clf
 from .clean import clean
 from .config import load_config
 from .dedupe import dedupe_items, dedupe_suppliers
-from .export import build_output, sidecar_path, template_columns, write_outputs
+from .export import build_output, review_stats, sidecar_path, template_columns, write_outputs
 from .ingest import ingest_all
 from .match import match_sources
 from .paths import REPO_ROOT
@@ -168,6 +168,7 @@ def run(config_path: str, data_dir: str, out_path: str, *, use_llm: bool = True,
 
     out = build_output(df, tax, columns)
     report["validation"] = validate_output(out, df, tax, columns, n_input)
+    report["review"] = review_stats(out, float(cfg.get("classification", {}).get("review_below", 0.7)))
     audit = write_outputs(df, out, out_path)
     report["runtime_sec"] = round(time.time() - t0, 1)
     report["output"] = str(out_path)

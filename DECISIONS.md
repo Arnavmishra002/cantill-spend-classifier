@@ -59,8 +59,11 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     matches the table for any month from the invoice date to the posting date is accepted, because a line can be
     booked at the posting month and a high-inflation currency such as ARS can move more than three times in that
     span. This changed one B line by 0.10 USD after the build output was committed.
-17. Missing rates use the FX table for the invoice month, or the posting month when the invoice date is broken or
-    implausible, or the nearest month in the table.
+17. The FX month is the invoice month, as the brief says. The posting month is used instead when the invoice date
+    is missing, impossible, more than 120 days after posting or more than 1,100 days before it. A line's own rate is
+    used when it passes the check in item 16. Otherwise the client's table gives the rate for that month, or for
+    the nearest month within 95 days; then the shipped ECB table the same way; then the median of the file's own
+    rates for that currency; then a table month further away, flagged `FX_STALE_TABLE`.
 18. No status column. 10,322 lines have no paid date, and document types include CA, Z6, PD and PR. A line posted to
     AP has passed approval; unpaid only means not yet paid. None is excluded for status. The 3,000 seeds agree: none
     is `NOT_APPROVED`.
@@ -136,6 +139,17 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     spend-weighted accuracy rests on a few lines. Line-weighted accuracy is always reported next to it.
 37. Determinism. Claude rejects temperature settings, so a disk cache keyed by model, prompt, tree and line makes
     re-runs on the same machine identical. Item codes are not sent to the LLM, so identical lines share one answer.
-38. Runtime and cost at C size. Units, not lines, drive cost. A's 65,549 lines collapse to 8,483 units; 5,000
+38. Vague text. A description made only of generic words (misc, product, as per quote) and numbers or references
+    (INV-123, PO 4500012345) is no evidence. Offline, such a line takes the category mix of its supplier's or
+    account's confident lines. Without those it keeps the guess from the supplier name or account at confidence
+    0.3 or less, and with neither it goes to the tree's catch-all branch (Other, Miscellaneous) or the general leaf
+    of its branch. Claude sees the supplier and account, and item 33 applies.
+39. Review queue and coverage. Included lines below confidence 0.7 (`classification.review_below`) are counted in
+    the run summary and the report with their share of spend. On A's build output that is 2.9% of lines and 3.7%
+    of spend; on B's, 64% of lines and 48% of spend, mostly lines without a description; on the 5,000 California
+    lines, 35% of lines and 1.7% of spend. On B's seeds Claude's confidence matches its accuracy (0.88 against
+    0.89). Coverage, the share of spend classified to level 2 or deeper, is 100% because every included line gets
+    a leaf.
+40. Runtime and cost at C size. Units, not lines, drive cost. A's 65,549 lines collapse to 8,483 units; 5,000
     California lines are 4,528 units. That run took 137 s and 5.94 USD with 57 units on Opus and 4,471 on Sonnet;
     the 6 USD cap trimmed only second opinions. Drafted C configs use concurrency 16 and a 60 USD cap.

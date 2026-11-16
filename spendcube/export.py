@@ -72,3 +72,21 @@ def write_outputs(df: pd.DataFrame, out: pd.DataFrame, path: Path):
     audit = sidecar_path(path, "_audit.csv")
     df[audit_cols].to_csv(audit, index=False, encoding="utf-8")
     return audit
+
+
+def review_stats(out: pd.DataFrame, below: float = 0.7) -> dict:
+    """Human-review queue and coverage of included lines, the way spend tools report them:
+    lines and spend below a confidence threshold, and the share of spend classified to
+    level 2 or deeper (all of it, unless the tree has one level)."""
+    inc = out[pd.to_numeric(out["include"], errors="coerce") == 1]
+    if inc.empty:
+        return {"threshold": below, "lines": 0, "line_share": 0.0, "spend_share": 0.0, "coverage_l2_spend": 0.0}
+    spend = pd.to_numeric(inc["spend"], errors="coerce").fillna(0.0).abs()
+    conf = pd.to_numeric(inc["confidence"], errors="coerce").fillna(0.0)
+    low = conf < below
+    l2 = inc["l2"].fillna("").astype(str).str.strip() != "" if "l2" in inc else pd.Series(False, index=inc.index)
+    tot = float(spend.sum()) or 1.0
+    return {"threshold": below, "lines": int(low.sum()), "line_share": round(float(low.mean()), 4),
+            "spend_share": round(float(spend[low].sum()) / tot, 4),
+            "coverage_l2_spend": round(float(spend[l2].sum()) / tot, 4),
+            "confident_l2_spend": round(float(spend[l2 & ~low].sum()) / tot, 4)}
