@@ -129,6 +129,9 @@ def near_duplicates(sub: pd.DataFrame, src: dict, dcfg: dict) -> list:
         "txt": sub["description"].map(norm_key),
         "sup": sub["supplier_name"].map(compact_key) if "supplier_name" in sub.columns else "",
         "ord": sub["row_order"],
+        # copies whose status counts sort first, so the kept copy is one that counts
+        "excl": sub["cand_codes"].map(lambda c: any(k in ("CANCELLED", "NOT_APPROVED") for k, _ in c))
+        if "cand_codes" in sub.columns else False,
     }, index=sub.index)
     t = t[(t["inv"] != "") & t["amt"].notna()]
     thr = float(dcfg.get("fuzzy_text_min", 90))
@@ -136,7 +139,7 @@ def near_duplicates(sub: pd.DataFrame, src: dict, dcfg: dict) -> list:
     for _, g in t.groupby(["inv", "line", "amt", "qty"], sort=False, dropna=False):
         if len(g) < 2:
             continue
-        g = g.sort_values("ord")
+        g = g.sort_values(["excl", "ord"])
         reps = []
         for i, r in g.iterrows():
             same = any(fuzz.ratio(r["txt"], rt) >= thr and

@@ -101,6 +101,10 @@ def _subset_sum(ids, amounts, target, tol, max_parts):
     return best
 
 
+def _status_excluded(cands) -> bool:
+    return any(code in ("CANCELLED", "NOT_APPROVED") for code, _ in (cands or []))
+
+
 def _text_sim(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
@@ -316,11 +320,14 @@ def match_sources(df: pd.DataFrame, cfg: dict, supplier_key: pd.Series | None = 
             df.loc[idx, "match_pass"] = pas
             dup_rows += [(i, "cross_source:" + pas) for i in idx]
         else:
-            # keep the first approved row of the cluster; the rest are exported twice
-            keep = idx[0]
-            df.loc[idx[1:], "matched_to"] = df.at[keep, "record_id"]
-            df.loc[idx[1:], "match_pass"] = "S0_exported_twice"
-            dup_rows += [(i, "exported_twice") for i in idx[1:]]
+            # keep the first copy whose status counts (a cancelled or rejected first copy must
+            # not take a paid copy's spend down with it); idx[0] only when no copy counts
+            counting = [i for i in idx if not _status_excluded(df.at[i, "cand_codes"])]
+            keep = counting[0] if counting else idx[0]
+            rest = [i for i in idx if i != keep]
+            df.loc[rest, "matched_to"] = df.at[keep, "record_id"]
+            df.loc[rest, "match_pass"] = "S0_exported_twice"
+            dup_rows += [(i, "exported_twice") for i in rest]
     for i, rule in dup_rows:
         df.at[i, "cand_codes"] = df.at[i, "cand_codes"] + [("DUPLICATE", rule)]
 

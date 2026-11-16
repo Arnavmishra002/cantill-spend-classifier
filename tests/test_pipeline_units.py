@@ -293,3 +293,26 @@ def test_general_leaf_detection():
     spares = tax.by_path[("Eq", "Pumps", "Pump Spares")]
     assert tax.general_sibling(spares) == tax.by_path[("Eq", "Pumps", "Pumps")]
     assert tax.display_path(tax.by_path[("Eq", "Pumps", "Pumps")]).endswith("[general]")
+
+
+def test_exported_twice_keeps_the_copy_whose_status_counts():
+    cfg = _deep_merge(DEFAULTS, {"cross_source": {
+        "enabled": True, "primary": "erp", "secondary": "tool", "po_pattern": r"(\d{10})"}})
+    rows = [
+        dict(record_id="ERP:1", source="erp", po_number="4510000001", net_amount=5.0, quantity_num=1.0,
+             description="UNRELATED", supplier_name="X", date_parsed=pd.NaT),
+        # same invoice exported twice: the first copy is cancelled, the second is paid
+        dict(record_id="TOOL:a", source="tool", invoice_number="INV-9", net_amount=100.0, quantity_num=2.0,
+             description="HAND TOOLS", supplier_name="CORORA", po_reference="", date_parsed=pd.NaT),
+        dict(record_id="TOOL:b", source="tool", invoice_number="9", net_amount=100.0, quantity_num=2.0,
+             description="Hand tools", supplier_name="Corora", po_reference="", date_parsed=pd.NaT),
+    ]
+    df = pd.DataFrame(rows).fillna("")
+    df["row_order"] = range(len(df))
+    df["spend_rc"] = df["net_amount"]
+    df["cand_codes"] = [[], [("CANCELLED", "status:cancelled")], []]
+    match_sources(df, cfg)
+    resolve_codes(df, cfg)
+    got = dict(zip(df["record_id"], df["exclusion_reason"]))
+    assert got["TOOL:a"] == "CANCELLED" and got["TOOL:b"] == ""
+    assert df.loc[df["record_id"] == "TOOL:b", "spend"].iloc[0] == 100.0
