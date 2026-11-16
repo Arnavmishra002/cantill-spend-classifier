@@ -170,7 +170,7 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
     units["weak"] = units["desc_key"].map(is_weak)
     stats["units"] = U
     stats["weak_units"] = int(units["weak"].sum())
-    log.info("classification: %d lines -> %d units (%d weak)", len(df), U, stats["weak_units"])
+    log.info("classification: %d lines in %d units (%d weak)", len(df), U, stats["weak_units"])
 
     # unit label distributions from labels (leaf only; non-leaf labels are mapped
     # to themselves later if needed)
@@ -229,7 +229,7 @@ def classify(df: pd.DataFrame, cfg: dict, tax: Taxonomy, data_dir: Path, cache_d
             probs[todo] = p_sup[todo]
             conf[todo] = p_sup[todo].max(1)
             # a supplier never seen in the labels: the model mostly learned supplier
-            # identity, so its confidence is not trustworthy -> halve it (routes to LLM)
+            # identity, so its confidence can be scaled down (factor 1.0 by default)
             seen_sup = set(units.loc[has_label, "supplier_key"])
             unseen = todo & ~units["supplier_key"].isin(seen_sup).values
             conf[unseen] *= float(ccfg.get("unseen_supplier_conf_factor", 1.0))

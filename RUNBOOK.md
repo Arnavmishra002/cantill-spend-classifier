@@ -5,6 +5,10 @@ Target: pushed by 11:15. Hard stop: 12:00.
 
 ## 0. Before 10:00
 
+Check the inbox that received the challenge email, including its spam folder, for the blind-test email at 10:00.
+Run every command in a normal terminal, not inside a Claude Code sandbox, which blocks the API calls.
+
+
 ```bash
 cd cantill-spend-classifier
 git status                       # clean, on main, at tag v1.0-freeze
@@ -36,7 +40,8 @@ python run.py check-config --config configs/company_c.yaml --data data/C
 Review `configs/company_c.yaml` and the `check-config` output (10 minutes at most):
 
 - [ ] `classification.company_context`: fill it in now, at 10:00, in one or two plain sentences (industry, what
-      the company buys). The draft writes one when the API is reachable; check it and replace any TODO.
+      the company buys), for example: "A US hospital group that buys medical supplies, drugs, imaging equipment,
+      facility services and IT." The draft writes one when the API is reachable; check it.
 - [ ] `record_id.column` is the line id column (the output uses it as `record_id`).
 - [ ] `columns.amount` is the line amount; `amount_type` net or gross is right; tax rate column if gross.
 - [ ] `currency` and `fx_rate`; `fx.table` if the email ships rates. Without a table the shipped ECB monthly table
@@ -51,17 +56,25 @@ Review `configs/company_c.yaml` and the `check-config` output (10 minutes at mos
 
 ## 3. Run the three companies
 
+Start C first: it takes longest and is worth 50 points. Run A2 and B2 at the same time in a second terminal.
+
 ```bash
-python run.py --config configs/company_a.yaml --data data/A2 --out submission/arnav_mishra__A2.csv
-python run.py --config configs/company_b.yaml --data data/B2 --out submission/arnav_mishra__B2.csv
 python run.py --config configs/company_c.yaml --data data/C  --out submission/arnav_mishra__C.csv
 ```
 
+```bash
+python run.py --config configs/company_a.yaml --data data/A2 --out submission/arnav_mishra__A2.csv
+python run.py --config configs/company_b.yaml --data data/B2 --out submission/arnav_mishra__B2.csv
+```
+
+Measured on Monday: A (65,549 lines) about 2 minutes, B (41,028 lines) about 12 minutes with no cache, 2,000
+California lines with a 200-leaf tree 2 minutes and 3.30 USD. A 25,000-line C is expected to take about 25 minutes
+and cost about 40 USD; the drafted cap is 60 USD.
+
 Each run prints an LLM health line per model first, then ends with `=== RUN OK ===` (validation passed), or prints
-`OUTPUT VALIDATION FAILED` or an `ERROR:` line and exits with code 2. If the summary says
-`LLM : NOT USED`, the key or the network is the problem: fix `.env` and re-run. Finished batches are cached, so a
-re-run only pays for what is missing. Expected runtime: A2 and B2 a few minutes each, C about 10 to 25 minutes for
-25,000 lines.
+`OUTPUT VALIDATION FAILED` or an `ERROR:` line and exits with code 2. If the summary says `LLM : NOT USED`, the key
+or the network is the problem: fix `.env` and re-run. Finished batches are cached, so a re-run only pays for what is
+missing.
 
 ## 4. Check
 

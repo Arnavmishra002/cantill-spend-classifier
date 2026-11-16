@@ -12,7 +12,7 @@ import pandas as pd
 
 _WS = re.compile(r"\s+")
 _NON_ALNUM = re.compile(r"[^0-9A-Z]+")
-# OCR confusions inside alphabetic words: 0->O, 1->I, 5->S, 8->B, 3->E, 6->G, 2->Z
+# OCR confusions inside alphabetic words: 0 for O, 1 for I, 5 for S, 8 for B, 3 for E, 6 for G, 2 for Z
 _OCR_MAP = str.maketrans({"0": "O", "1": "I", "5": "S", "8": "B", "3": "E", "6": "G", "2": "Z", "|": "I"})
 _HAS_ALPHA = re.compile(r"[A-Z]")
 
@@ -105,7 +105,7 @@ def parse_number(x) -> float:
             s = s.replace(",", "")
     elif has_c:
         parts = s.split(",")
-        # '1,234' / '1,00,000' / '12,345,678' -> grouping; '12,5' / '0,15' -> decimal comma
+        # '1,234', '1,00,000' and '12,345,678' use grouping; '12,5' and '0,15' use a decimal comma
         if len(parts[-1]) == 3 and all(p.isdigit() for p in parts):
             s = s.replace(",", "")
         elif len(parts) == 2:
@@ -130,7 +130,7 @@ def parse_number_series(s: pd.Series) -> pd.Series:
 
 
 def parse_rate(x, default=np.nan) -> float:
-    """Tax rate: '15', '15%', '0.15' -> 0.15. Blank -> default."""
+    """Tax rate: '15', '15%' and '0.15' all give 0.15. Blank gives the default."""
     v = parse_number(x)
     if np.isnan(v):
         return default

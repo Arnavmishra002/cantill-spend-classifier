@@ -1,18 +1,18 @@
 """Supplier and item de-duplication.
 
 Suppliers
-  1. normalise names: ascii, upper, '&' -> AND, OCR digit fold, strip legal
+  1. normalise names: ascii, upper, '&' read as AND, OCR digit fold, strip legal
      suffixes (PTY LTD, PVT LTD, LLP, INC, GMBH, SA DE CV, ...), drop punctuation
   2. compact key (no spaces) so 'KEL MONT' == 'KELMONT'
   3. union-find over: same compact key, same supplier id (if trusted), same tax
      id, and fuzzy name match inside blocks (rapidfuzz, conservative threshold)
-  4. learned memory (when labels exist): known name / id -> client golden key
+  4. learned memory (when labels exist): a known name or id maps to the client's golden key
 
 Items
   1. item code (material number) groups lines
   2. normalised description (OCR fold, unit spacing, punctuation) groups codes
      that describe the same thing; fuzzy match inside blocks for typos
-  3. learned memory: item code -> golden item key
+  3. learned memory: an item code maps to the golden item key
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class UnionFind:
 def supplier_norm(name: str, suffixes: list[str] | None = None) -> str:
     s = ascii_fold(clean_text(name)).upper()
     s = s.replace("&", " AND ").replace("+", " AND ")
-    s = re.sub(r"\(.*?\)", lambda m: " " + m.group(0)[1:-1] + " ", s)  # '(PTY)' -> 'PTY'
+    s = re.sub(r"\(.*?\)", lambda m: " " + m.group(0)[1:-1] + " ", s)  # '(PTY)' becomes 'PTY'
     s = norm_key(s, ocr=True)
     toks = s.split()
     suf = [x.split() for x in (suffixes or DEFAULT_LEGAL_SUFFIXES)]
@@ -154,7 +154,7 @@ def dedupe_suppliers(df: pd.DataFrame, cfg: dict, memory: dict | None = None) ->
     for n in node.unique():
         uf.find(n)
     if scfg.get("use_supplier_id", True):
-        # same supplier id -> same supplier (ids are per source system unless the
+        # the same supplier id is the same supplier (ids are per source system unless the
         # config says they are global), except through hub ids
         for k, g in node.groupby(idk.values):
             if not k or k in hub_ids:
@@ -262,7 +262,7 @@ def dedupe_items(df: pd.DataFrame, cfg: dict, supplier_key: pd.Series, memory: d
         if use_code and c and c not in generic_codes:
             n = "C:" + c
             if not g:
-                uf.union(n, "D:" + d)  # code <-> description
+                uf.union(n, "D:" + d)  # code and description are linked
         elif not g:
             n = "D:" + d
         else:

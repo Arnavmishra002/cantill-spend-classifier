@@ -36,7 +36,7 @@ LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD 
 PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLL SOS SRD SSP STN SYP SZL THB TJS
 TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL RCN""".split())
 
-# field -> header regex (higher score earlier in list)
+# canonical field and its header patterns (earlier patterns score higher)
 HEADER_HINTS = {
     "record_id": [r"^(line|record|row|txn|transaction|invoice[\s_]*line|entry)[\s_]?(id|key)$", r"^id$",
                   r"line[\s_]*id", r"(record|row|line)[\s_]*(no|number|#)$"],
@@ -88,7 +88,7 @@ GENERIC_NP_RULES = [
 
 
 def _score_header(col: str, field: str) -> float:
-    # 'Supplier No.' / 'Vendor-ID' / 'Vendor #' -> 'supplier no' / 'vendor id' / 'vendor #'
+    # 'Supplier No.', 'Vendor-ID' and 'Vendor #' become 'supplier no', 'vendor id' and 'vendor #'
     c = re.sub(r"[.\-:]+", " ", col.strip().lower()).strip()
     c = re.sub(r"\s+", " ", c)
     for k, rx in enumerate(HEADER_HINTS.get(field, [])):
@@ -121,7 +121,7 @@ def profile_columns(df: pd.DataFrame, n=3000) -> dict:
 
 
 def heuristic_roles(prof: dict) -> dict:
-    """Return field -> (column, score)."""
+    """Return {field: (column, score)}."""
     cands = {}
     for f in HEADER_HINTS:
         best = None
@@ -236,7 +236,7 @@ def _merge_roles(h: dict, l: dict | None, prof: dict) -> tuple[dict, list[str], 
                 if f in roles:
                     notes.append(f"{f}: LLM chose `{col}` over heuristic `{roles[f]}`")
                 roles[f] = col
-        # one column -> one role
+        # one column serves one role
         seen = {}
         for f in list(roles):
             c = roles[f]
@@ -453,7 +453,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         if re.search(r"(?i)gross|incl|total", amt_col) and ("tax_rate" in roles or "tax_amount" in roles):
             src["amount_type"] = "gross"
             src["tax_rate_default"] = 0.0
-            notes.append(f"{p.name}: amount `{amt_col}` looks gross -> tax removed (CHECK)")
+            notes.append(f"{p.name}: amount `{amt_col}` looks gross, so tax is removed (CHECK)")
         # plausible year window from the data itself (1st to 99th percentile, plus one year)
         yrs = []
         for f in ("date", "posting_date"):
@@ -478,7 +478,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             smap, unknown = _status_map(vals)
             src["status_map"] = smap
             if unknown:
-                notes.append(f"{p.name}: status values not recognised {unknown} -> NOT_APPROVED (CHECK)")
+                notes.append(f"{p.name}: status values not recognised {unknown}, treated as NOT_APPROVED (CHECK)")
         if "currency" in roles:
             cur = df[roles["currency"]].astype(str).str.strip().str.upper()
             top = cur[cur != ""].value_counts()
@@ -490,7 +490,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                              f"`fx.table` if one is provided (CHECK)")
         else:
             src["currency_default"] = reporting
-            notes.append(f"{p.name}: no currency column -> assumed {reporting} (CHECK)")
+            notes.append(f"{p.name}: no currency column, assumed {reporting} (CHECK)")
         if "gl_description" in roles:
             gl = df[roles["gl_description"]].astype(str).map(clean_text)
             susp = sorted({g for g in gl.unique() if re.search(

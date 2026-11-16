@@ -14,8 +14,8 @@ Steps
           and similar text
       P3  same PO, same unit price, quantity within tolerance, similar text
           (weighbridge / partial-quantity differences)
- 3. Matched clusters -> every row DUPLICATE (primary record is counted).
-    Unmatched clusters -> first row counted, the others DUPLICATE.
+ 3. In a matched cluster every row is DUPLICATE (the primary record is counted).
+    In an unmatched cluster the first copy whose status counts is kept, the others are DUPLICATE.
 """
 from __future__ import annotations
 

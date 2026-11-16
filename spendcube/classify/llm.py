@@ -223,7 +223,7 @@ def llm_settings(cfg: dict) -> dict:
 
 
 def check_llm_health(cfg: dict) -> dict[str, str]:
-    """Health of every distinct model the config uses: model -> 'ok' or a reason."""
+    """Health of every distinct model the config uses: {model: 'ok' or a reason}."""
     lcfg = llm_settings(cfg)
     prices = {**DEFAULT_PRICES, **{k: tuple(v) for k, v in (lcfg.get("prices") or {}).items()}}
     out: dict[str, str] = {}
@@ -380,7 +380,7 @@ class LLMClassifier:
 
     def _run_batches(self, prov, items: list[dict], role: str, instruction: str | None = None) -> dict[str, dict]:
         """items: [{'uid', 'payload', 'group'?, 'group_payload'?, 'spend'?, 'cands'?}].
-        Returns uid -> {node, confidence}. Batches run in descending spend order, so a cost
+        Returns {uid: {node, confidence}}. Batches run in descending spend order, so a cost
         cap only ever drops the low-spend tail."""
         out: dict[str, dict] = {}
         todo = []

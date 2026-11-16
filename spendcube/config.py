@@ -35,7 +35,7 @@ DEFAULTS: dict[str, Any] = {
     "sources": [],
     "exclusion_precedence": list(EXCLUSION_CODES),
     "status": {
-        # lower-cased status values -> outcome. Unknown statuses are logged and
+        # lower-case status values and their outcome. Unknown statuses are logged and
         # treated as `unknown_status_outcome`.
         "include": ["paid", "approved", "posted", "cleared", "complete", "completed", "closed"],
         "CANCELLED": ["cancelled", "canceled", "void", "voided", "reversed", "deleted"],
@@ -64,7 +64,7 @@ DEFAULTS: dict[str, Any] = {
         "supplier": {
             "use_supplier_id": True,
             "fuzzy_threshold": 92,
-            "legal_suffixes": None,  # None -> built-in list
+            "legal_suffixes": None,  # None means the built-in list
         },
         "item": {"use_item_code": True, "fuzzy_threshold": 95, "scope": "global"},
     },

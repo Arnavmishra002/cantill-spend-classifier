@@ -1,7 +1,7 @@
 """Decide what counts as spend. Every exclusion gets a code and a rule name.
 
 Rules (all from config):
-  status            per-source status map -> CANCELLED / NOT_APPROVED
+  status            per-source status map to CANCELLED or NOT_APPROVED
   non_procurement   regex / value-list rules on any canonical or raw column
   duplicates        exact duplicates inside one source (same values on a key)
 Cross-source duplicates (same purchase in two systems) are marked in match.py.
@@ -55,7 +55,7 @@ def apply_status_rules(df: pd.DataFrame, cfg: dict, stats: dict):
         if len(unknown):
             stats[f"unmapped_status_{s['name']}"] = unknown.value_counts().head(20).to_dict()
             outcome = smap.get("unknown_status_outcome", "NOT_APPROVED")
-            log.warning("source %s: unknown status values %s -> %s",
+            log.warning("source %s: unknown status values %s treated as %s",
                         s["name"], sorted(unknown.unique())[:10], outcome)
             if outcome in ("CANCELLED", "NOT_APPROVED"):
                 _mark(df, m & df["status"].str.strip().str.lower().isin(set(unknown)), outcome,

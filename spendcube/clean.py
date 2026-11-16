@@ -155,7 +155,7 @@ def clean(df: pd.DataFrame, cfg: dict, data_dir: Path) -> pd.DataFrame:
         bad = yr.notna() & ((yr < lo) | (yr > hi))
         _add_flag(df, bad, f"IMPOSSIBLE_{f.split('_parsed')[0].upper()}")
         df.loc[bad, f] = pd.NaT
-    # invoice date implausibly far from posting date -> flag, do not trust for FX month
+    # an invoice date implausibly far from the posting date is flagged and not used for the FX month
     if df["posting_date_parsed"].notna().any():
         gap = (df["date_parsed"] - df["posting_date_parsed"]).dt.days
         susp = gap.notna() & ((gap > dcfg.get("max_days_after_posting", 120)) |

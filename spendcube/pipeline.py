@@ -1,4 +1,4 @@
-"""End-to-end run: one config + one data folder -> one validated output file."""
+"""End-to-end run: one config and one data folder give one validated output file."""
 from __future__ import annotations
 
 import json

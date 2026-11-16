@@ -16,8 +16,10 @@ python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Python 3.11 or newer. The LLM layer uses the Claude API and is optional: without a key the tool runs on its
-offline layers and says so in the run summary. To enable it, put the key in a git-ignored `.env` file or export it:
+Python 3.11 or newer. The LLM layer uses the Claude API and is optional. Without a key the tool runs on its offline
+layers, says so in the run summary, and accuracy drops to the offline numbers in APPROACH.md. With a key, a re-run
+on the same machine reads the disk cache in `.cache/` and reproduces the same output; on a new machine Claude is
+asked again, so a few answers can differ. To enable it, put the key in a git-ignored `.env` file or export it:
 
 ```bash
 cp .env.example .env      # then fill in ANTHROPIC_API_KEY
@@ -58,6 +60,17 @@ that is missing from the input file prints one error line and exits with code 2.
 `out/<name>_audit.csv` explains every row (rule, matched record, flags, FX source, classification layer) and
 `out/<name>_report.json` summarises the run. Both are git-ignored because they contain raw descriptions.
 
+## How to change things (config only)
+
+- A new exclusion rule: add an entry under `non_procurement` with a `field` (any mapped field or raw column) and a
+  `pattern` or a list of `values`. The run summary shows how many lines each rule caught.
+- A new input column: map it under `sources[].columns` to a canonical field (`description`, `gl_description`,
+  `context` and so on). Several columns can be listed for one text field; they are joined.
+- A different model: change `classification.llm.primary`, `second`, `judge` or `tail`, for example
+  `{vendor: anthropic, model: claude-sonnet-5-5, effort: low}`. `cost_cap_usd` limits spend per run.
+- A new status value: add it to the right list in `status_map`. Unknown values count as `NOT_APPROVED`.
+- A new company: `python run.py init-config ...`, review the draft, run `check-config`, then run.
+
 ## Evaluate
 
 ```bash
@@ -65,6 +78,7 @@ python run.py evaluate --config configs/company_a.yaml --data data/company_A --m
 python run.py evaluate --config configs/company_a.yaml --data data/company_A --mode supplier_holdout
 python run.py evaluate --config configs/company_a.yaml --data data/company_A --mode fresh_slice      # simulates A2
 python run.py calibrate --pairs configs/company_a.yaml:data/company_A configs/company_b.yaml:data/company_B
+python scripts/california_check.py --csv <downloaded ca_po.csv> --out out/ca --lines 2000 --leaves 200
 python -m pytest -q
 ```
 
@@ -79,6 +93,7 @@ spendcube/
   taxonomy.py paths.py textnorm.py config.py pipeline.py evaluate.py init_config.py check.py calibrate.py
   classify/   units.py vectors.py llm.py enrich.py calibration.py __init__.py (layer orchestration)
   data/       fx_monthly_usd.csv (public ECB rates), offline_calibration.json
+scripts/california_check.py  external check on public California purchase data (not stored here)
 tests/                       unit tests on synthetic data
 submission/                  output files only
 ```
