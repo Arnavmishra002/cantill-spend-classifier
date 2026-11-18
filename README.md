@@ -47,6 +47,7 @@ python run.py --config configs/company_a.yaml --data data/A2 --out submission/ar
 python run.py --config configs/company_b.yaml --data data/B2 --out submission/arnav_mishra__B2.csv
 python run.py init-config --data data/C --taxonomy "<tree file>" --company C --out configs/company_c.yaml
 python run.py check-config --config configs/company_c.yaml --data data/C
+python scripts/profile_data.py --config configs/company_c.yaml --data data/C     # optional: review aid
 python run.py --config configs/company_c.yaml --data data/C --out submission/arnav_mishra__C.csv
 ```
 
@@ -98,6 +99,7 @@ spendcube/
   classify/   units.py vectors.py llm.py enrich.py calibration.py __init__.py (layer orchestration)
   data/       fx_monthly_usd.csv (public ECB rates), offline_calibration.json
 scripts/california_check.py  external check on public California purchase data (not stored here)
+scripts/profile_data.py      prints column values, keyword hits and top suppliers to review a drafted config
 tests/                       unit tests on synthetic data
 submission/                  output files only
 ```

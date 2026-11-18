@@ -220,6 +220,8 @@ def heuristic_roles(prof: dict) -> dict:
                 v = p["ccy_rate"] if p["ccy_rate"] > 0.8 else -1
             elif f == "record_id":
                 v = 1.0 if p["unique_ratio"] > 0.999 and p["blank"] == 0 else -1
+                if v < 0 and h > 0 and p["unique_ratio"] > 0.9:
+                    v = 0.5                  # an id column with a few repeated or blank ids
             elif f in ("invoice_line", "po_item"):
                 v = 1.0 if p["unique_ratio"] < 0.5 else -1     # line numbers repeat across invoices
             elif f == "description":
@@ -687,9 +689,19 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             notes.append(f"{p.name}: {groups[:2]} used as consistency groups (lines on one contract tend to "
                          f"share a category) (CHECK)")
         name = re.sub(r"[^a-z0-9]+", "_", p.stem.lower()).strip("_") or f"src{i}"
+        rid_col = roles.get("record_id")
+        if not rid_col:
+            rid_col = max(df.columns, key=lambda c: df[c].astype(str).str.strip().nunique())
+            warnings_top.append(f"WARNING {p.name}: no id column found; the most unique column `{rid_col}` is used "
+                                f"as record_id. Check record_id.column.")
+        ids = df[rid_col].astype(str).str.strip()
+        n_rep = int(ids[ids != ""].duplicated().sum())
+        if n_rep:
+            warnings_top.append(f"WARNING {p.name}: record id `{rid_col}` repeats on {n_rep} rows. The first row "
+                                f"keeps the id and later rows get #2, #3. Check record_id.column.")
         src = {"name": name, "file": _uniq([p.name, re.sub(r"\d+", "*", p.stem) + p.suffix]),
                **({"sheet": sheet} if sheet is not None else {}),
-               "record_id": {"column": roles.get("record_id", df.columns[0])},
+               "record_id": {"column": rid_col},
                "amount_type": "net", "columns": cols}
         amt_col = roles.get("amount", "")
         if not amt_col:

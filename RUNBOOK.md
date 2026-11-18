@@ -36,7 +36,12 @@ do not repeat them. Do not delete `data/company_A` or `data/company_B`: they are
 ```bash
 python run.py init-config --data data/C --taxonomy "<tree file name>" --company C --out configs/company_c.yaml
 python run.py check-config --config configs/company_c.yaml --data data/C
+python scripts/profile_data.py --config configs/company_c.yaml --data data/C
 ```
+
+`profile_data.py` only reads and prints: every column with its role, the values of columns with few distinct values
+(status, document type, account), non-procurement keywords found in any column, the largest suppliers and the
+tree's size. Use it to check the points below. It shows values from the data, so do not save or commit its output.
 
 `init-config` prints any WARNING lines at the end; they are also at the top of the config. Read them first. If
 `init-config` stops with an error, use the template instead (see "If something breaks" below).
@@ -57,6 +62,10 @@ Review `configs/company_c.yaml` and the `check-config` output (10 minutes at mos
       "WARNING: status rules exclude ..." (more than 30% of lines or spend), fix `status_map` before running: an
       unrecognised status word excludes every line that carries it.
 - [ ] `non_procurement`: keep the generic tax, intercompany and finance rules; check the drafted GL account list.
+      If the profile shows tax, intercompany, payroll or finance words in a document type, account or supplier
+      type column, add a rule for that column (`field: raw__<column name>` with `values` or a `pattern`).
+- [ ] `tax_rate_default` on a gross file: the rate used when the tax rate is blank. The draft writes 0.0; set the
+      standard rate only if the email or the data says a blank means the standard rate.
 - [ ] `taxonomy.level_columns` are the name columns in order L1 to L4, not code columns (or `format: parent_child`).
 - [ ] `amount_type`: gross when the amount includes VAT (Brutto, TTC, incl.); then `tax_amount` or `tax_rate` is
       mapped. `columns.amount` is not `TODO`.
@@ -118,6 +127,7 @@ Open the repository on GitHub and confirm the four files are there.
 | `init-config` stops with an error, or its draft maps the wrong columns | `cp configs/company_c_template.yaml configs/company_c.yaml`, replace every CHANGE_ME with the real names, delete the optional lines whose columns do not exist, then run `check-config`. |
 | `No file matching ...` | The file name differs. Pass the right folder; for A2 or B2 copy the file inside `data/A2` to the expected name; for C fix `configs/company_c.yaml`. |
 | `ERROR: config ... column ... is not in the header` | Fix the column name in `configs/company_c.yaml`. |
+| `class source` is mostly `retrieval` and the log shows failed batches | Claude rejected the requests. Set `classification.llm.shortlist_above_leaves` in the C config to a number below the tree's leaf count and re-run; each batch then offers only its candidate leaves. |
 | `LLM : NOT USED` | Check `.env` and the network, then re-run. Use `--require-llm` to make the run stop instead. |
 | Validation failure on categories | Check the order of `taxonomy.level_columns` in the C config. |
 | Out of time | `--no-llm` runs everything offline in under two minutes (lower accuracy). |

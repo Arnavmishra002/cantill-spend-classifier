@@ -5,7 +5,8 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
 
 ## General
 
-1. Excluded rows. One row per input record. An excluded row has `include=0`, a code, `spend=0`, blank l1 to l4 as in
+1. Excluded rows. One row per input record. If the input repeats a record id, the first row keeps the id and
+   later rows get `#2`, `#3`, so every input id is still in the output and ids stay unique. An excluded row has `include=0`, a code, `spend=0`, blank l1 to l4 as in
    the template's example row, its supplier and item keys, and the confidence of the exclusion.
 2. Hard lines. Every included line gets a leaf at the deepest level, because a guessed leaf can be right and a
    blank level cannot. The confidence carries the doubt.

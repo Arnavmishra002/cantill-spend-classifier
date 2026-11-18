@@ -162,3 +162,18 @@ def test_only_data_file_is_used_even_if_it_looks_like_labels(tmp_path):
     pd.DataFrame({"L1": ["A"], "L2": ["B"]}).to_csv(tmp_path / "tree.csv", index=False)
     cfg = yaml.safe_load(draft_config(str(tmp_path), "tree.csv", str(tmp_path / "c.yaml"), use_llm=False).read_text())
     assert cfg["sources"][0]["columns"]["amount"] == "Amount"
+
+
+def test_id_column_with_repeats_or_no_id_column_is_flagged(tmp_path):
+    n = 200
+    base = pd.DataFrame({"Supplier Name": ["Acme Inc", "Beta LLC", "Gamma Ltd", "Delta Co"] * (n // 4),
+                         "Line ID": [f"L{i}" for i in range(n)], "Description": [f"widget type {i % 37}" for i in range(n)],
+                         "Invoice Date": ["2025-01-10"] * n, "Amount": [f"{10 + i}.50" for i in range(n)]})
+    pd.DataFrame({"L1": ["Office"], "L2": ["Paper"]}).to_csv(tmp_path / "tree.csv", index=False)
+    pd.concat([base, base.iloc[:10]]).to_csv(tmp_path / "lines.csv", index=False)      # 10 rows exported twice
+    text = draft_config(str(tmp_path), "tree.csv", str(tmp_path / "c.yaml"), use_llm=False).read_text()
+    cfg = yaml.safe_load(text)
+    assert cfg["sources"][0]["record_id"]["column"] == "Line ID" and "repeats on 10 rows" in text
+    base.drop(columns=["Line ID"]).to_csv(tmp_path / "lines.csv", index=False)         # no id column at all
+    text = draft_config(str(tmp_path), "tree.csv", str(tmp_path / "c.yaml"), use_llm=False).read_text()
+    assert "no id column found" in text

@@ -215,3 +215,18 @@ def test_workbook_with_a_cover_sheet_reads_the_lines_sheet(tmp_path):
     (tmp_path / "c.yaml").write_text(yaml.safe_dump(cfg2))
     with pytest.raises(ConfigColumnError, match="Lines"):
         _run(tmp_path)
+
+
+def test_profile_script_runs_on_a_drafted_config(tmp_path, capsys, monkeypatch):
+    import importlib.util
+    folder = make_company_e(tmp_path / "E")
+    _draft(folder, "kategorien.csv")
+    spec = importlib.util.spec_from_file_location(
+        "profile_data", Path(__file__).resolve().parent.parent / "scripts" / "profile_data.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(sys, "argv", ["profile_data.py", "--data", str(folder), "--config", str(folder / "c.yaml")])
+    assert mod.main() == 0
+    text = capsys.readouterr().out
+    assert "record id `Zeilen-ID`: 400 distinct, 0 repeated" in text and "Status [status]" in text
+    assert "===== tree: " in text and "could not" not in text

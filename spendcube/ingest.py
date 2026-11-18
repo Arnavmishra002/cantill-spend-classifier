@@ -181,10 +181,14 @@ def ingest_all(cfg: dict, data_dir: Path) -> pd.DataFrame:
     for c in df.columns:
         if not pd.api.types.is_numeric_dtype(df[c]):
             df[c] = df[c].fillna("").astype(str)
-    dup = df["record_id"].duplicated(keep=False)
-    if dup.any():
-        # Make ids unique but keep them traceable; validation reports this.
-        log.warning("%d duplicate record_ids in input; suffixing", int(dup.sum()))
-        df.loc[dup, "record_id"] = df.loc[dup, "record_id"] + "#" + \
-            df[dup].groupby("record_id").cumcount().add(1).astype(str)
+    nth = df.groupby("record_id").cumcount()
+    later = nth > 0
+    if later.any():
+        # The first row with an id keeps it, so the output still carries every input id.
+        # Later rows with the same id get #2, #3 so that each row stays one output record.
+        log.warning("%d input rows repeat an earlier record_id; they get a #2, #3 suffix", int(later.sum()))
+        df.loc[later, "record_id"] = df.loc[later, "record_id"] + "#" + (nth[later] + 1).astype(str)
+        clash = df["record_id"].duplicated()
+        if clash.any():                       # a suffixed id already existed in the input
+            df.loc[clash, "record_id"] = df.loc[clash, "record_id"] + "#row" + df.index[clash].astype(str)
     return df

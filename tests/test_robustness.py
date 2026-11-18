@@ -129,3 +129,16 @@ def test_sidecars_go_to_the_override_folder_and_a_one_leaf_tree_runs(tmp_path):
     assert (side / "side_audit.csv").exists() and (side / "side_report.json").exists()
     out = pd.read_csv(tmp_path / "side.csv")
     assert out.loc[out["include"] == 1, "l2"].eq("Metals").all()
+
+
+def test_repeated_record_id_keeps_the_first_and_suffixes_later_rows(tmp_path):
+    cfgp = _company(tmp_path, rows=4)
+    df = pd.read_csv(tmp_path / "lines.csv", dtype=str)
+    df["text"] = ["steel plate", "copper pipe", "copper pipe", "brass valve"]
+    df["amt"] = ["10.00", "20.00", "20.00", "30.00"]
+    df["id"] = ["L0", "L1", "L1", "L2"]            # the same line exported twice with its id
+    df.to_csv(tmp_path / "lines.csv", index=False)
+    run(str(cfgp), str(tmp_path), str(tmp_path / "o.csv"), use_llm=False, cache_dir=str(tmp_path / "cache"))
+    out = pd.read_csv(tmp_path / "o.csv", dtype=str, keep_default_na=False)
+    assert out["record_id"].tolist() == ["L0", "L1", "L1#2", "L2"]
+    assert out.set_index("record_id")["exclusion_reason"].to_dict() == {"L0": "", "L1": "", "L1#2": "DUPLICATE", "L2": ""}
