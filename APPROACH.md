@@ -42,7 +42,7 @@ A2 simulation: pairwise F1 0.994.
 ## Runtime and cost
 | Run | lines | units | time | cost | per 1,000 lines |
 |---|---:|---:|---:|---:|---:|
-| A, labels hidden, repetitive text | 65,549 | 8,483 | 8.6 min | $7.97 | $0.19 |
+| A, labels hidden, repetitive text | 65,549 | 8,483 | 8.6 min | $7.97 | $0.12 |
 | B build output | 41,028 | 17,737 | 6.2 min | $8.18 | $0.20 |
 | California, mostly unique text | 5,000 | 4,528 | 2.3 min | $5.94 | $1.19 |
 | Offline only | 25,362 | | 4 s | $0 | $0 |
@@ -51,8 +51,8 @@ Projection from the 5,000-line run, not measured: 25,000 lines of unique text ta
 about 30 USD; repetitive text costs less. The limit is 60 minutes. No call starts if it could pass the cost cap.
 
 ## AI tools used
-In the tool: the Anthropic Claude API only (Opus 5.5 and Sonnet 5.5). To build it: Claude Code (Claude Opus 5.5) as
-a pair programmer, under my review. No data was pasted into a chatbot.
+In the tool: the Anthropic Claude API only (Opus 5.5 and Sonnet 5.5). To build it: Claude Code (Claude Opus 5.5, and
+Claude Fable 5.2 for the final checks) as a pair programmer, under my review. No data was pasted into a chatbot.
 
 ## Limitations
 Zero-shot L3 on A's equipment-based tree reaches 71.6% of spend; most errors are client filing conventions the text

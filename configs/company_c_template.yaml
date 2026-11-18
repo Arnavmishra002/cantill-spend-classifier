@@ -15,8 +15,11 @@ search_dirs: []                  # the --data folder is always searched first
 
 taxonomy:
   file: CHANGE_ME_tree.csv       # a file name or a pattern such as "*tree*.csv"
+  # sheet: CHANGE_ME             # only for a workbook: the sheet that holds the tree
   format: wide                   # wide: one column per level. parent_child: id and parent id columns
   level_columns: [CHANGE_ME_L1, CHANGE_ME_L2, CHANGE_ME_L3, CHANGE_ME_L4]   # in order, top level first
+  # path_separator: ">"          # only when ONE column holds the whole path, such as "IT > Hardware > Laptops";
+  #                              # then level_columns names that one column
   # For format parent_child, use these instead of level_columns:
   # id_column: CHANGE_ME
   # parent_column: CHANGE_ME
@@ -25,6 +28,7 @@ taxonomy:
 sources:
 - name: lines
   file: [CHANGE_ME_lines.csv]    # the invoice lines file
+  # sheet: CHANGE_ME             # only for a workbook: the sheet that holds the lines
   record_id:
     column: CHANGE_ME_line_id    # unique per row; becomes record_id in the output
   amount_type: net               # gross if the amount includes VAT or sales tax
@@ -66,6 +70,12 @@ non_procurement:
 - name: finance_and_other_non_supplier
   field: description
   pattern: (?i)\b(interest (charge|expense|payment|on loan)s?|bank (charge|fee)s?|royalt(y|ies)|dividends?|loan repayment|revenue share|partner billing|penalty interest|salary|salaries|payroll|donation)\b
+
+# Rules with their own code, for approval or cancellation kept in yes or no columns. Example:
+# exclusion_rules:
+# - {name: cancelled_flag, field: CHANGE_ME_cancelled_column, values: [y, yes, "true", "1"], code: CANCELLED}
+# - {name: not_approved_flag, field: CHANGE_ME_approved_column, values: [n, no, "false", "0"], code: NOT_APPROVED}
+exclusion_rules: []
 
 duplicates:
   within_source: true
@@ -130,5 +140,6 @@ fx:
   rate_semantics: units_per_reporting
   ignore_rate_for_reporting_currency: true
   sanity_band: [0.33, 3.0]
+  # currency_aliases: {"CHANGE_ME value in the file": USD}   # for currency values that are not ISO codes
   # table: CHANGE_ME_fx.csv     # only if the email ships an FX table
   # table_columns: {currency: CHANGE_ME, month: CHANGE_ME, rate: CHANGE_ME}

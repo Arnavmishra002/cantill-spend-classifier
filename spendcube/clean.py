@@ -19,7 +19,7 @@ import pandas as pd
 
 from .ingest import read_table
 from .paths import resolve_file
-from .textnorm import clean_text, parse_dates_with_flags, parse_number_series
+from .textnorm import clean_text, normalize_currency, parse_dates_with_flags, parse_number_series
 
 log = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ def clean(df: pd.DataFrame, cfg: dict, data_dir: Path) -> pd.DataFrame:
         df.loc[m, "tax_rate_used"] = rate
 
     # ---- currency
-    cur = _col(df, "currency").str.strip().str.upper()
+    cur = normalize_currency(_col(df, "currency"), rc, (cfg.get("fx") or {}).get("currency_aliases"))
     for name, s in srcs.items():
         m = (df["source"] == name) & (cur == "")
         if m.any():

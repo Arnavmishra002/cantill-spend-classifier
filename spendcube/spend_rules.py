@@ -63,13 +63,19 @@ def apply_status_rules(df: pd.DataFrame, cfg: dict, stats: dict):
 
 
 def apply_non_procurement(df: pd.DataFrame, cfg: dict, stats: dict):
-    for r in cfg.get("non_procurement") or []:
+    """Config rules on any field or raw column. `non_procurement` rules give NON_PROCUREMENT;
+    `exclusion_rules` carry their own code, for approval or cancellation kept in flag columns."""
+    rules = [(r, "NON_PROCUREMENT", "non_procurement") for r in cfg.get("non_procurement") or []] + \
+            [(r, r["code"], "exclusion_rules") for r in cfg.get("exclusion_rules") or []]
+    for r, code, kind in rules:
         name = r.get("name", r["field"])
+        if kind == "exclusion_rules" and code in ("CANCELLED", "NOT_APPROVED") and not name.startswith("status"):
+            name = f"status:{name}"      # counted with the status rules in the exclusion warning
         scope = df["source"].isin(r["sources"]) if r.get("sources") else pd.Series(True, index=df.index)
         try:
             s = field_series(df, r["field"])
         except KeyError as e:
-            log.warning("non_procurement rule %s skipped: %s", name, e)
+            log.warning("%s rule %s skipped: %s", kind, name, e)
             continue
         if "pattern" in r:
             with warnings.catch_warnings():  # groups in user patterns are fine here
@@ -83,7 +89,7 @@ def apply_non_procurement(df: pd.DataFrame, cfg: dict, stats: dict):
             u = r["unless"]
             us = field_series(df, u["field"])
             hit &= ~us.str.contains(u["pattern"], flags=re.I, regex=True, na=False)
-        stats[f"non_procurement:{name}"] = _mark(df, scope & hit, "NON_PROCUREMENT", name)
+        stats[f"{kind}:{name}"] = _mark(df, scope & hit, code, name)
 
 
 def apply_within_source_duplicates(df: pd.DataFrame, cfg: dict, stats: dict):
@@ -207,5 +213,7 @@ def status_exclusion_warning(df: pd.DataFrame, limit: float = 0.30) -> str | Non
     if max(share_n, share_s) <= limit:
         return None
     vals = df.loc[st, "status"].astype(str).value_counts().head(8).to_dict() if "status" in df else {}
+    if not any(k.strip() for k in vals):          # the exclusions come from flag rules, not a status column
+        vals = df.loc[st, "exclusion_rule"].astype(str).value_counts().head(8).to_dict()
     return (f"status rules exclude {share_n:.0%} of lines and {share_s:.0%} of spend. Check status_map "
             f"before using this output. Excluded status values: {vals}")

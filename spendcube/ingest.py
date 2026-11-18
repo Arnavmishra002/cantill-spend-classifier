@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import logging
 from pathlib import Path
 
@@ -51,11 +52,17 @@ def read_table(path: Path, sheet=None, delimiter=None, encoding=None, header_row
             raw = pd.read_excel(path, sheet_name=sheet or 0, dtype=str, header=None, nrows=20)
             hr = detect_header_row(raw) if hr == "auto" or _looks_untitled(raw) else 0
         df = pd.read_excel(path, sheet_name=sheet or 0, dtype=str, header=int(hr))
-        return df.fillna("")
+        return _drop_blank_rows(df.fillna(""))
     if suf == ".parquet":
         return pd.read_parquet(path).astype(str).replace({"nan": "", "None": ""})
     raw = path.read_bytes()
     encs = [encoding] if encoding else list(_ENCODINGS)
+    if not encoding:
+        # Excel's "Unicode text" export is UTF-16: a byte-order mark, or a NUL in every other byte
+        if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            encs = ["utf-16"] + encs
+        elif raw[:2000].count(b"\x00") > 0.3 * len(raw[:2000]):
+            encs = (["utf-16-le"] if raw[1:2] == b"\x00" else ["utf-16-be"]) + encs
     text = None
     for enc in encs:
         try:
@@ -84,8 +91,49 @@ def read_table(path: Path, sheet=None, delimiter=None, encoding=None, header_row
         width = max((len(r) for r in head), default=0)
         probe = pd.DataFrame([r + [""] * (width - len(r)) for r in head])
         hr = detect_header_row(probe) if (hr == "auto" or _looks_untitled(probe)) else 0
-    return pd.read_csv(io.StringIO(text), sep=delimiter, dtype=str, keep_default_na=False,
-                       na_filter=False, engine="c", skiprows=int(hr) if hr else None)
+    return _drop_blank_rows(pd.read_csv(io.StringIO(text), sep=delimiter, dtype=str, keep_default_na=False,
+                                        na_filter=False, engine="c", skiprows=int(hr) if hr else None))
+
+
+def _drop_blank_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Rows with nothing in any cell (trailing ',,,,' lines, empty Excel rows) are not records."""
+    if df.empty:
+        return df
+    blank = pd.Series(True, index=df.index)
+    for c in df.columns:
+        blank &= df[c].astype(str).str.strip() == ""
+        if not blank.any():
+            return df
+    return df[~blank].reset_index(drop=True)
+
+
+_TOTAL_WORD = re.compile(r"(?i)^\s*(grand\s+|sub\s*|report\s+|overall\s+)?(totals?|sum|summe|gesamt(summe)?|totale|"
+                         r"total\s+g[eé]n[eé]ral)\b\s*:?\s*$|^\s*(grand\s+|sub\s*)?totals?\s*[:(]")
+
+
+def drop_summary_rows(df: pd.DataFrame, id_col: str | None = None, tail: int = 3) -> tuple[pd.DataFrame, int]:
+    """Drop a totals line at the end of an export. It must be one of the last rows, hold a cell
+    that reads 'Total', 'Grand Total', 'Sum' and the like, have nothing but numbers in its other
+    cells, and have no id of its own. A real record from a supplier called Total is kept."""
+    if len(df) < 5:
+        return df, 0
+    from .textnorm import parse_number_series
+    drop = []
+    for i in df.index[-tail:]:
+        cells = df.loc[i].astype(str).str.strip()
+        filled = cells[cells != ""]
+        is_label = filled.map(lambda v: bool(_TOTAL_WORD.search(v)))
+        if not is_label.any():
+            continue
+        others = filled[~is_label]
+        if len(others) and parse_number_series(others).isna().any():
+            continue                 # some other cell holds text: a record, not a totals line
+        if id_col is not None and id_col in cells.index and cells[id_col] != "" and not _TOTAL_WORD.search(cells[id_col]):
+            continue                 # it has an id of its own
+        drop.append(i)
+    if not drop:
+        return df, 0
+    return df.drop(index=drop).reset_index(drop=True), len(drop)
 
 
 def _looks_untitled(raw: pd.DataFrame) -> bool:
@@ -134,13 +182,17 @@ def ingest_source(src: dict, data_dir: Path, cfg: dict | None = None) -> pd.Data
     df = read_table(path, sheet=src.get("sheet"), delimiter=src.get("delimiter"),
                     encoding=src.get("encoding"), header_row=src.get("header_row"))
     df.columns = [clean_text(c) for c in df.columns]
-    n = len(df)
-    log.info("source %s: %d rows from %s", src["name"], n, path.name)
-
     rid = src["record_id"]
     if isinstance(rid, str):
         rid = {"column": rid}
     id_col = _resolve(rid["column"], df.columns, f"{src['name']}.record_id", path, src.get("sheet"))[0]
+    if src.get("drop_summary_rows", True):
+        df, n_tot = drop_summary_rows(df, id_col)
+        if n_tot:
+            log.warning("source %s: dropped %d totals row(s) at the end of %s (not records)", src["name"], n_tot,
+                        path.name)
+    n = len(df)
+    log.info("source %s: %d rows from %s", src["name"], n, path.name)
     out = pd.DataFrame(index=df.index)
     ids = df[id_col].map(clean_text)
     if (ids == "").any():

@@ -44,6 +44,9 @@ DEFAULTS: dict[str, Any] = {
         "unknown_status_outcome": "NOT_APPROVED",   # brief: only approved or paid lines count
     },
     "non_procurement": [],
+    # Rules like non_procurement, each with its own `code` (CANCELLED, NOT_APPROVED, NON_PROCUREMENT,
+    # DUPLICATE): for a company that keeps approval or cancellation in flag columns.
+    "exclusion_rules": [],
     "duplicates": {"within_source": True, "key": None},
     "cross_source": {"enabled": False},
     "fx": {
@@ -159,6 +162,11 @@ def validate_config(cfg: dict) -> None:
     for r in cfg.get("non_procurement", []) or []:
         if "field" not in r or not ({"pattern", "values"} & set(r)):
             errs.append(f"non_procurement rule {r.get('name')}: needs `field` and `pattern` or `values`")
+    for r in cfg.get("exclusion_rules", []) or []:
+        if "field" not in r or not ({"pattern", "values"} & set(r)):
+            errs.append(f"exclusion_rules rule {r.get('name')}: needs `field` and `pattern` or `values`")
+        if r.get("code") not in EXCLUSION_CODES:
+            errs.append(f"exclusion_rules rule {r.get('name')}: `code` must be one of {sorted(EXCLUSION_CODES)}")
     xs = cfg.get("cross_source", {})
     if xs.get("enabled"):
         for k in ("primary", "secondary"):

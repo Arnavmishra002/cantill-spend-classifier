@@ -73,6 +73,10 @@ that is missing from the input file prints one error line and exits with code 2.
 - A different model: change `classification.llm.primary`, `second`, `judge` or `tail`, for example
   `{vendor: anthropic, model: claude-sonnet-5-5, effort: low}`. `cost_cap_usd` limits spend per run.
 - A new status value: add it to the right list in `status_map`. Unknown values count as `NOT_APPROVED`.
+- Approval or cancellation kept in a yes or no column: add an entry under `exclusion_rules` with a `field`, the
+  `values` that exclude a line and a `code` (`CANCELLED`, `NOT_APPROVED`, `NON_PROCUREMENT` or `DUPLICATE`).
+- A currency written as a name or symbol the tool does not know: map it under `fx.currency_aliases`.
+- A tree in one column of whole paths: set `taxonomy.path_separator`. A tree or lines on a workbook sheet: `sheet`.
 - A new company: `python run.py init-config ...`, review the draft, run `check-config`, then run.
 
 ## Evaluate

@@ -209,6 +209,12 @@ def load_taxonomy(cfg: dict, data_dir: Path) -> Taxonomy:
     missing = [c for c in cols if c not in df.columns]
     if missing:
         raise ValueError(f"taxonomy level columns {missing} not in {list(df.columns)}")
+    sep = tcfg.get("path_separator")
+    if sep and len(cols) == 1:
+        # one column holds the whole path, such as "IT > Hardware > Laptops"
+        paths = [tuple(x.strip() for x in str(v).split(sep) if x.strip()) for v in df[cols[0]]]
+        descs = dict(zip(paths, df[desc_col])) if desc_col and desc_col in df.columns else None
+        return Taxonomy.from_paths(paths, descs)
     paths = [tuple(r) for r in df[cols].itertuples(index=False)]
     descs = None
     if desc_col and desc_col in df.columns:

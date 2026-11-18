@@ -235,3 +235,62 @@ def parse_dates_with_flags(s: pd.Series, dayfirst: bool = True) -> tuple[pd.Seri
 
 def parse_date_series(s: pd.Series, dayfirst: bool = True) -> pd.Series:
     return parse_dates_with_flags(s, dayfirst)[0]
+
+
+# ---------------------------------------------------------------------- currencies
+ISO_CCY = set("""AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP
+BYN BZD CAD CDF CHF CLP CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD
+GNF GTQ GYD HKD HNL HRK HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK
+LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB
+PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLL SOS SRD SSP STN SYP SZL THB TJS
+TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL RCN""".split())
+
+# Currency names and symbols that mean one currency only. '$' and 'DOLLAR' are read as the
+# reporting currency when that is a dollar. A config can add more under fx.currency_aliases.
+CURRENCY_ALIASES = {
+    "US$": "USD", "USD$": "USD", "US DOLLAR": "USD", "US DOLLARS": "USD", "U.S. DOLLAR": "USD", "U.S. DOLLARS": "USD",
+    "UNITED STATES DOLLAR": "USD", "UNITED STATES DOLLARS": "USD", "U.S.D.": "USD",
+    "€": "EUR", "EURO": "EUR", "EUROS": "EUR",
+    "£": "GBP", "POUND STERLING": "GBP", "POUNDS STERLING": "GBP", "BRITISH POUND": "GBP", "BRITISH POUNDS": "GBP",
+    "STERLING": "GBP", "UK POUND": "GBP",
+    "₹": "INR", "INDIAN RUPEE": "INR", "INDIAN RUPEES": "INR",
+    "RAND": "ZAR", "SOUTH AFRICAN RAND": "ZAR",
+    "YEN": "JPY", "JAPANESE YEN": "JPY",
+    "SWISS FRANC": "CHF", "SWISS FRANCS": "CHF",
+    "CANADIAN DOLLAR": "CAD", "CANADIAN DOLLARS": "CAD", "C$": "CAD", "CA$": "CAD", "CAD$": "CAD",
+    "AUSTRALIAN DOLLAR": "AUD", "AUSTRALIAN DOLLARS": "AUD", "A$": "AUD", "AU$": "AUD", "AUD$": "AUD",
+    "NEW ZEALAND DOLLAR": "NZD", "NZ$": "NZD", "SINGAPORE DOLLAR": "SGD", "S$": "SGD",
+    "HONG KONG DOLLAR": "HKD", "HK$": "HKD",
+    "MEXICAN PESO": "MXN", "MEXICAN PESOS": "MXN", "MX$": "MXN",
+    "BRAZILIAN REAL": "BRL", "R$": "BRL", "REAIS": "BRL",
+    "CHINESE YUAN": "CNY", "YUAN": "CNY", "RMB": "CNY", "RENMINBI": "CNY", "CNH": "CNY",
+    "UAE DIRHAM": "AED", "SAUDI RIYAL": "SAR", "SWEDISH KRONA": "SEK", "NORWEGIAN KRONE": "NOK",
+    "DANISH KRONE": "DKK", "POLISH ZLOTY": "PLN", "TURKISH LIRA": "TRY", "RUSSIAN RUBLE": "RUB",
+    "SOUTH KOREAN WON": "KRW", "KOREAN WON": "KRW",
+}
+_DOLLAR_CCY = {"USD", "CAD", "AUD", "NZD", "SGD", "HKD"}
+_ISO_TOKEN = re.compile(r"(?<![A-Z])[A-Z]{3}(?![A-Z])")
+
+
+def normalize_currency(values: pd.Series, reporting: str = "USD", extra: dict | None = None) -> pd.Series:
+    """Upper-case currency values as ISO codes where the value is clear: a config alias, an
+    ISO code, a known name or symbol, or text holding exactly one ISO code ('USD - US Dollar').
+    Anything else is returned unchanged, so it is flagged later instead of guessed."""
+    v = values.fillna("").astype(str).str.strip().str.upper()
+    rc = str(reporting or "").upper()
+    alias = dict(CURRENCY_ALIASES)
+    if rc in _DOLLAR_CCY:
+        alias.update({"$": rc, "DOLLAR": rc, "DOLLARS": rc})
+    mine = {str(k).strip().upper(): str(val).strip().upper() for k, val in (extra or {}).items()}
+
+    def one(u: str) -> str:
+        if u in mine:
+            return mine[u]
+        if u == "" or u in ISO_CCY:
+            return u
+        if u in alias:
+            return alias[u]
+        codes = {t for t in _ISO_TOKEN.findall(u) if t in ISO_CCY}
+        return codes.pop() if len(codes) == 1 else u
+    table = {u: one(u) for u in pd.unique(v)}
+    return v.map(table)

@@ -26,16 +26,9 @@ import yaml
 
 from .config import DEFAULTS
 from .ingest import excel_sheets, read_table
-from .textnorm import clean_text, parse_date_series, parse_number_series
+from .textnorm import ISO_CCY, clean_text, normalize_currency, parse_date_series, parse_number_series
 
 log = logging.getLogger(__name__)
-
-ISO_CCY = set("""AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP
-BYN BZD CAD CDF CHF CLP CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD
-GNF GTQ GYD HKD HNL HRK HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK
-LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB
-PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLL SOS SRD SSP STN SYP SZL THB TJS
-TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL RCN""".split())
 
 # canonical field and its header patterns (earlier patterns score higher)
 # Each list is in order of preference; the first pattern scores highest. Translations of a
@@ -193,7 +186,7 @@ def profile_columns(df: pd.DataFrame, n=3000) -> dict:
             "num_rate": float(num.notna().mean()) if len(nbv) else 0.0,
             "placeholder_rate": float(filler.mean()) if len(nb) else 0.0,
             "date_rate": float(dt.notna().mean()) if len(nb) else 0.0,
-            "ccy_rate": float(nb.str.upper().isin(ISO_CCY).mean()) if len(nb) else 0.0,
+            "ccy_rate": float(normalize_currency(nb).isin(ISO_CCY).mean()) if len(nb) else 0.0,
             "avg_len": float(nb.str.len().mean()) if len(nb) else 0.0,
             "alpha_rate": float(nb.str.contains(r"[A-Za-z]{3,}", regex=True).mean()) if len(nb) else 0.0,
             "has_decimals": float(nb.str.contains(r"[.,]\d{2}$", regex=True).mean()) if len(nb) else 0.0,
@@ -338,6 +331,46 @@ def _merge_roles(h: dict, l: dict | None, prof: dict) -> tuple[dict, list[str], 
         context = [c for c in prof if c not in used and any(re.search(rx, c.lower()) for rx in CONTEXT_HINTS)
                    and prof[c]["alpha_rate"] > 0.5 and prof[c]["nunique"] > 1][:3]
     return roles, notes, {"context": context}
+
+
+TRUTHY = {"y", "yes", "true", "t", "1", "x", "ja", "oui", "si", "sim"}
+FALSY = {"n", "no", "false", "f", "0", "nein", "non", "nao"}
+# header pattern, the values that exclude a line, the exclusion code
+FLAG_HEADERS = [
+    (r"(?i)cancel|void|revers|deleted|storn|annul", TRUTHY, "CANCELLED"),
+    (r"(?i)reject|on[\s_]*hold|\bhold\b|blocked|disput|pending|gesperrt", TRUTHY, "NOT_APPROVED"),
+    (r"(?i)approv|authori[sz]|released|genehmigt|freigegeben", FALSY, "NOT_APPROVED"),
+]
+
+
+def flag_rules(df: pd.DataFrame, used: set, source: str) -> tuple[list[dict], list[str]]:
+    """Yes or no columns that carry cancellation or approval (Cancelled Flag, Approved, On Hold)
+    become exclusion rules. A Paid flag only gets a note: an unpaid line can still be approved."""
+    rules, notes = [], []
+    for c in df.columns:
+        if c in used:
+            continue
+        v = df[c].astype(str).map(_fold)
+        nb = v[v != ""]
+        vals = set(nb.unique())
+        if not nb.size or len(vals) < 2 or not vals <= (TRUTHY | FALSY):
+            continue
+        hit = next(((bad, code) for rx, bad, code in FLAG_HEADERS if re.search(rx, c)), None)
+        if hit is None:
+            if re.search(r"(?i)\bpaid\b|bezahlt|pay[eé]\b|pagad", c):
+                notes.append(f"`{c}` is a paid flag {sorted(vals)}; unpaid lines are kept. Add an exclusion rule "
+                             f"if unpaid means not approved (CHECK)")
+            continue
+        bad, code = hit
+        excl = sorted(vals & bad)
+        if not excl:
+            continue
+        n = int(v.isin(excl).sum())
+        slug = re.sub(r"[^a-z0-9]+", "_", c.lower()).strip("_")
+        rules.append({"name": f"flag_{slug}", "field": c, "values": excl, "code": code, "sources": [source]})
+        notes.append(f"flag column `{c}`: values {excl} drafted as {code} ({n} lines, {n / max(len(df), 1):.0%}) "
+                     f"(CHECK exclusion_rules)")
+    return rules, notes
 
 
 GROSS_HEADER = r"(?i)gross|brutto|\bttc\b|\bincl|\binkl|including[\s_]*(vat|tax|gst)|with[\s_]*(vat|tax|gst)|" \
@@ -511,15 +544,19 @@ def _company_context(tax_paths: list[str], samples: list[str]) -> str | None:
         return None
 
 
-def _best_sheet(path: Path) -> tuple[str | None, str | None]:
+def _best_sheet(path: Path, exclude: tuple = ()) -> tuple[str | None, str | None]:
     """For a workbook with several sheets, the sheet that looks like transaction lines:
     headers that read as amount, date, supplier and description, then the most rows.
-    Returns (sheet name or None for a single-sheet file, a CHECK note or None)."""
+    Returns (sheet name or None for a single-sheet file, a CHECK note or None). Sheets in
+    `exclude` (the tree's sheet) are not considered; if nothing else looks like lines, the
+    note is 'no lines sheet'."""
     sheets = excel_sheets(path)
     if len(sheets) < 2:
         return None, None
     best, best_score = None, None
     for sh in sheets:
+        if sh in exclude:
+            continue
         try:
             d = read_table(path, sheet=sh)
         except Exception:
@@ -530,14 +567,60 @@ def _best_sheet(path: Path) -> tuple[str | None, str | None]:
         score = (hits, len(d), len(cols))
         if best_score is None or score > best_score:
             best, best_score = sh, score
-    if best is None:
-        return None, None
+    if best is None or (exclude and best_score[0] < 2):
+        return None, "no lines sheet" if exclude else None
     return best, (f"workbook sheets {sheets}; reading sheet {best!r}, which looks like the transaction lines "
                   f"(CHECK sheet)")
 
 
-def _taxonomy_block(path: Path) -> dict:
-    t = read_table(path)
+def _tree_sheet(path: Path, sheets: list[str]) -> str:
+    """The sheet of a workbook that holds the category tree: level, category or parent
+    headers and no amount, date or supplier headers; else a sheet named like a tree."""
+    best, best_score = sheets[0], None
+    for sh in sheets:
+        try:
+            d = read_table(path, sheet=sh)
+        except Exception:
+            continue
+        cols = [clean_text(c) for c in d.columns]
+        tree_like = sum(bool(re.search(r"(?i)(level|lvl|\bl)[\s_-]?\d|l\d$|categor|parent|segment|family|class", c))
+                        for c in cols)
+        lines_like = sum(any(_score_header(c, f) > 0 for c in cols) for f in ("amount", "date", "supplier_name"))
+        named = bool(re.search(r"(?i)tax|tree|categor|hierarch", sh))
+        score = (tree_like > 0 and lines_like == 0, named, tree_like - 2 * lines_like, -len(d))
+        if best_score is None or score > best_score:
+            best, best_score = sh, score
+    return best
+
+
+_PATH_SEPARATORS = (">", "»", "|", "::", "\\", " / ", " - ", "/")
+
+
+def _path_separator(values: pd.Series) -> str | None:
+    """The separator when a single tree column holds whole paths ('IT > Hardware > Laptops').
+    Most rows must contain it and the first parts must repeat, as branches of a tree do."""
+    v = values.astype(str).map(clean_text)
+    v = v[v != ""]
+    if len(v) < 4:
+        return None
+    for sep in _PATH_SEPARATORS:
+        has = v.str.contains(sep, regex=False)
+        if has.mean() < 0.8:
+            continue
+        first = v[has].str.split(sep, regex=False).str[0].str.strip()
+        if first.nunique() <= 0.6 * int(has.sum()):
+            return sep
+    return None
+
+
+def _taxonomy_block(path: Path, sheet: str | None = None) -> dict:
+    block, t = _taxonomy_block_of(read_table(path, sheet=sheet), path)
+    if sheet is not None:
+        block["sheet"] = sheet
+    return block, t
+
+
+def _taxonomy_block_of(t: pd.DataFrame, path: Path) -> dict:
     cols = list(t.columns)
     lower = {c.lower(): c for c in cols}
     if any("parent" in k for k in lower):
@@ -554,6 +637,15 @@ def _taxonomy_block(path: Path) -> dict:
     block = {"file": path.name, "format": "wide", "level_columns": levels}
     if desc:
         block["description_column"] = desc[0]
+    if len(levels) == 1:
+        sep = _path_separator(t[levels[0]])
+        if sep:
+            block["path_separator"] = sep
+            depth = int(t[levels[0]].astype(str).str.split(sep, regex=False).str.len().max())
+            tnotes.append(f"column `{levels[0]}` holds whole paths; they are split on {sep!r} into {depth} levels "
+                          f"(CHECK path_separator)")
+            if depth > 4:
+                tnotes.append(f"tree paths have {depth} levels; the output has 4 (CHECK)")
     if len(levels) > 4:
         tnotes.append(f"tree has {len(levels)} level columns {levels}; the output has 4 levels (CHECK level_columns)")
     block["_notes"] = tnotes
@@ -600,12 +692,18 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         if not hits:
             raise FileNotFoundError(f"taxonomy {taxonomy} not found in {data_dir}")
         tax_path = hits[0]
-    tax_block, tax_df = _taxonomy_block(tax_path)
+    tax_sheets = excel_sheets(tax_path)
+    tree_sheet = _tree_sheet(tax_path, tax_sheets) if len(tax_sheets) > 1 else None
+    tax_block, tax_df = _taxonomy_block(tax_path, sheet=tree_sheet)
     tree_notes = [f"{tax_path.name}: {n}" for n in tax_block.pop("_notes", [])]
+    if tree_sheet is not None:
+        tree_notes.append(f"{tax_path.name}: workbook sheets {tax_sheets}; the tree is read from sheet "
+                          f"{tree_sheet!r} (CHECK taxonomy.sheet)")
+    # the tree's workbook can also hold the lines, on another sheet
     cand = [data_dir / f for f in files] if files else \
         sorted(p for p in data_dir.iterdir() if p.is_file() and p.suffix.lower() in
-               (".csv", ".tsv", ".txt", ".xlsx", ".xls") and p.resolve() != tax_path.resolve()
-               and not p.name.startswith("."))
+               (".csv", ".tsv", ".txt", ".xlsx", ".xls", ".xlsm") and not p.name.startswith(".")
+               and (p.resolve() != tax_path.resolve() or tree_sheet is not None))
     sources, notes, fx_table = [], [], None
     set_aside: list[str] = []      # files skipped as an FX table or labels; one may be the only transaction file
     warnings_top: list[str] = []   # printed first in the draft header
@@ -614,10 +712,21 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
     consistency_groups: list[str] = []
     all_context_samples = []
     np_rules = list(GENERIC_NP_RULES)
+    exclusion_rules: list[dict] = []
     reporting = "USD"
     for i, p in enumerate(cand):
-        sheet, sheet_note = _best_sheet(p)
-        df = read_table(p, sheet=sheet)
+        is_tree_file = p.resolve() == tax_path.resolve()
+        sheet, sheet_note = _best_sheet(p, exclude=(tree_sheet,) if is_tree_file and tree_sheet else ())
+        if is_tree_file and sheet is None:
+            continue                 # the tree's own file, with no sheet of lines in it
+        try:
+            df = read_table(p, sheet=sheet)
+        except Exception as e:       # a stray file that is not a table
+            notes.append(f"{p.name}: could not be read as a table ({type(e).__name__}); skipped")
+            continue
+        if df.empty or len(df.columns) < 2:
+            notes.append(f"{p.name}: no table found in it; skipped")
+            continue
         if sheet_note:
             notes.append(f"{p.name}: {sheet_note}")
         df.columns = [clean_text(c) for c in df.columns]
@@ -758,10 +867,29 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             if "status" in cols and excl.mean() > 0.3:
                 warnings_top.append(f"WARNING {p.name}: the drafted status_map excludes {excl.mean():.0%} of lines "
                                     f"({st[excl].value_counts().head(6).to_dict()}). Check status_map before running.")
+        used_cols = {rid_col} | {c for v in cols.values() for c in (v if isinstance(v, list) else [v])}
+        frules, fnotes = flag_rules(df, used_cols, name)
+        exclusion_rules += frules
+        notes += [f"{p.name}: {n}" for n in fnotes]
+        if frules:
+            fl = pd.Series(False, index=df.index)
+            for r in frules:
+                fl |= df[r["field"]].astype(str).map(_fold).isin(r["values"])
+            if fl.mean() > 0.3:
+                warnings_top.append(f"WARNING {p.name}: the drafted flag rules exclude {fl.mean():.0%} of lines. "
+                                    f"Check exclusion_rules before running.")
         if "currency" in roles:
-            cur = df[roles["currency"]].astype(str).str.strip().str.upper()
+            raw_cur = df[roles["currency"]].astype(str).str.strip().str.upper()
+            cur = normalize_currency(raw_cur, reporting)
             top = cur[cur != ""].value_counts()
             notes.append(f"{p.name}: currencies {top.head(8).to_dict()}")
+            renamed = {r: c for r, c in zip(raw_cur, cur) if r != c}
+            if renamed:
+                notes.append(f"{p.name}: currency values read as codes {dict(list(renamed.items())[:8])} (CHECK)")
+            odd = sorted(set(cur[(cur != "") & ~cur.isin(ISO_CCY)]))
+            if odd:
+                warnings_top.append(f"WARNING {p.name}: currency values {odd[:8]} are not currency codes; those lines "
+                                    f"get spend 0. Map them under fx.currency_aliases.")
             foreign = [c for c in top.index if c != reporting]
             if foreign and "fx_rate" not in roles:
                 notes.append(f"{p.name}: non-{reporting} currencies {foreign[:8]} and no rate column: the shipped "
@@ -785,6 +913,15 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         if fx_sem:
             fx_sem_any = fx_sem
         sources.append(src)
+    real = [s_ for s_ in sources if s_["columns"].get("amount") != "TODO"]
+    if real and len(real) < len(sources) and not files:
+        for s_ in sources:
+            if s_["columns"].get("amount") == "TODO":
+                fname = s_["file"][0]
+                warnings_top[:] = [w for w in warnings_top if not w.startswith(f"WARNING {fname}:")]
+                notes[:] = [n for n in notes if not n.startswith(f"{fname}:")]
+                notes.append(f"{fname}: no amount column, so it is not a transaction file; not used as input")
+        sources = real
     if not sources and len(set_aside) == 1 and not files:
         # the only data file left must be the transactions, whatever its columns suggest
         return draft_config(data, taxonomy, out, company, use_llm, files=set_aside)
@@ -805,6 +942,7 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         "sources": sources,
         "exclusion_precedence": ["CANCELLED", "NOT_APPROVED", "NON_PROCUREMENT", "DUPLICATE"],
         "non_procurement": [{k: v for k, v in r.items() if not k.startswith("_")} for r in np_rules],
+        "exclusion_rules": [r for r in exclusion_rules if r["sources"][0] in {s_["name"] for s_ in sources}],
         "duplicates": {"within_source": True, "fuzzy": True},
         "cross_source": {"enabled": False},
         "dates": {"dayfirst": next((s_["dayfirst"] for s_ in sources if "dayfirst" in s_), True),

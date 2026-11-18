@@ -6,7 +6,9 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
 ## General
 
 1. Excluded rows. One row per input record. If the input repeats a record id, the first row keeps the id and
-   later rows get `#2`, `#3`, so every input id is still in the output and ids stay unique. An excluded row has `include=0`, a code, `spend=0`, blank l1 to l4 as in
+   later rows get `#2`, `#3`, so every input id is still in the output and ids stay unique. A row with nothing in
+   any cell is not a record. A totals line at the end of an export (a cell that reads Total or Grand Total, only
+   numbers in the other cells, no id of its own) is not a record either; the run logs it. An excluded row has `include=0`, a code, `spend=0`, blank l1 to l4 as in
    the template's example row, its supplier and item keys, and the confidence of the exclusion.
 2. Hard lines. Every included line gets a leaf at the deepest level, because a guessed leaf can be right and a
    blank level cannot. The confidence carries the doubt.
@@ -71,7 +73,8 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
 19. Non-procurement: intercompany accounts (`IC<nn>`, `I/C Payable`, `IC Payables`), the two vendor types used only
     on them, and lines that are a tax itself (sales tax, state and local taxes, GST input tax). Tax services and
     customs duties stay as spend, because B's tree has a customs leaf. Agreement with the seeds is 100%.
-20. Duplicates. 613 lines repeat every column except the line ID and are `DUPLICATE`. About 1,000 lines share an
+20. Duplicates. 613 lines repeat every column except the line ID. 604 of them end as `DUPLICATE` and 9 as
+    `NON_PROCUREMENT`, which comes first in the precedence. About 1,000 lines share an
     invoice and line number but differ in amount or account; they are kept, since JDE splits one line across GL
     distributions.
 21. Zero and negative lines are kept (918 and 833); the seeds include them.
@@ -81,7 +84,10 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
 
 ## Generic parts used for C
 
-24. FX without a usable rate. The repository ships `spendcube/data/fx_monthly_usd.csv`: ECB monthly average rates
+24. Currency values. A name or symbol that means one currency (Euro, US Dollar, £) is read as its ISO code, and so
+    is text that holds exactly one ISO code. "$" is read as the reporting currency when that is a dollar. Anything
+    else is left as it is, gets spend 0 and is flagged `NO_FX_RATE`; `fx.currency_aliases` in the config maps it.
+    FX without a usable rate. The repository ships `spendcube/data/fx_monthly_usd.csv`: ECB monthly average rates
     (2018 to October 2026) crossed into units per USD, plus official fixed pegs. Order of sources: the line's own
     rate, the client's table, this table, then the median of the file's own rates. A client table on the inverse base
     is inverted. Only a currency unknown to every source gets spend 0, flagged `NO_FX_RATE`. A table month more
@@ -111,6 +117,10 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     divided by amount less tax lands on a standard VAT rate more often than tax divided by amount. Placeholders such
     as "-" and "N/A" do not stop a column from being the amount; with no amount column the draft says `TODO`.
     Checked on two synthetic companies built for this (tests/synthetic_data.py).
+    Yes or no columns named for cancellation, rejection, hold or approval are drafted as `exclusion_rules` with
+    their own code. A paid flag only gets a note: as in item 18, an unpaid line can still be approved. A tree given
+    as one column of whole paths is split on its separator. A workbook that holds both the tree and the lines is
+    read sheet by sheet. A file without an amount column (a readme, a data dictionary) is not used as input.
 
 ## Classification
 

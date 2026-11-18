@@ -53,9 +53,12 @@ Review `configs/company_c.yaml` and the `check-config` output (10 minutes at mos
 - [ ] `classification.company_context`: fill it in now, at 10:00, in one or two plain sentences (industry, what
       the company buys), for example: "A US hospital group that buys medical supplies, drugs, imaging equipment,
       facility services and IT." The draft writes one when the API is reachable; check it.
+- [ ] `sources` lists only the invoice lines file (and its `sheet` for a workbook). If another file slipped in,
+      delete that source or draft again with `--files <lines file>`.
 - [ ] `record_id.column` is the line id column (the output uses it as `record_id`).
 - [ ] `columns.amount` is the line amount; `amount_type` net or gross is right; tax rate column if gross.
-- [ ] `currency` and `fx_rate`; `fx.table` if the email ships rates. Without a table the shipped ECB monthly table
+- [ ] `currency` and `fx_rate`; a WARNING about currency values that are not codes means `fx.currency_aliases` is
+      needed; `fx.table` if the email ships rates. Without a table the shipped ECB monthly table
       converts other currencies to USD (lines are flagged `FX_PUBLIC_TABLE`).
 - [ ] `date` is the invoice date, `posting_date` if present; `dayfirst` was decided from the values.
 - [ ] `supplier_name`, `supplier_id`, `description`, `item_code`, `gl_description`, `context` look sensible.
@@ -63,6 +66,9 @@ Review `configs/company_c.yaml` and the `check-config` output (10 minutes at mos
       on hold and the like are NOT_APPROVED. Values in other languages are mapped too. If `check-config` prints
       "WARNING: status rules exclude ..." (more than 30% of lines or spend), fix `status_map` before running: an
       unrecognised status word excludes every line that carries it.
+- [ ] `exclusion_rules`: yes or no columns for cancelled, rejected, on hold or approved are drafted here with their
+      code. Check each one against the profile. A paid flag is only noted: add a rule if the email says unpaid
+      lines do not count.
 - [ ] `non_procurement`: keep the generic tax, intercompany and finance rules; check the drafted GL account list.
       If the profile shows tax, intercompany, payroll or finance words in a document type, account or supplier
       type column, add a rule for that column (`field: raw__<column name>` with `values` or a `pattern`).
