@@ -133,7 +133,7 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
 
 ## Classification
 
-29. Models. Claude only, by the owner's decision. Opus 5.5 classifies the units that hold the top 95% of spend,
+29. Models. I use Claude only, so the tool needs one key. Opus 5.5 classifies the units that hold the top 95% of spend,
     Sonnet 5.5 the rest. Sonnet gives a second opinion on uncertain units and on the units holding the top half of
     spend; Opus judges disagreements. Opus was 1 to 3 points better than Sonnet on a sample at twice the cost.
 30. When to call the LLM with labels. Below supervised confidence 0.3 for A and 0.5 for B. On the A2 simulation the

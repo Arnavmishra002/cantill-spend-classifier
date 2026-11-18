@@ -5,7 +5,7 @@
 #   Replace every CHANGE_ME with a real file or column name from the C files.
 #   Delete any line under `columns` whose column does not exist in the file.
 #   python run.py check-config --config configs/company_c.yaml --data data/C
-#   python run.py --config configs/company_c.yaml --data data/C --out submission/arnav_mishra__C.csv --max-llm-cost 50
+#   python run.py --config configs/company_c.yaml --data data/C --out submission/arnav_mishra__C.csv --max-llm-cost 41
 #
 # A column named here that is missing from the file stops the run with one ERROR line naming it.
 
