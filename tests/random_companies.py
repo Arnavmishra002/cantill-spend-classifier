@@ -114,7 +114,7 @@ H = {  # header choices per role and language
 }
 SUFFIX = [("Ltd", "Limited", "LTD.", "Ltd"), ("Inc", "Incorporated", "INC.", "Inc"), ("LLC", "L.L.C.", "llc", "LLC"),
           ("GmbH", "GMBH", "Gmbh", "GmbH"), ("(Pty) Ltd", "Pty Ltd", "PTY LTD", "(PTY) LTD")]
-SYL = ["kel", "mar", "vex", "dun", "pra", "yar", "wex", "lor", "pel", "oak", "tor", "bren", "sil", "hart", "gal", "nor"]
+SYL = ["zan", "quo", "bri", "tam", "fen", "gol", "hux", "jil", "mos", "nim", "rud", "sab", "tev", "ulm", "vor", "xan"]
 KIND = ["Industrial", "Supplies", "Services", "Trading", "Engineering", "Logistics", "Solutions", "Medical", "Foods", "Systems"]
 
 

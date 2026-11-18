@@ -3,7 +3,7 @@
 Suppliers
   1. normalise names: ascii, upper, '&' read as AND, OCR digit fold, strip legal
      suffixes (PTY LTD, PVT LTD, LLP, INC, GMBH, SA DE CV, ...), drop punctuation
-  2. compact key (no spaces) so 'KEL MONT' == 'KELMONT'
+  2. compact key (no spaces) so 'NORTH WIND' == 'NORTHWIND'
   3. union-find over: same compact key, same supplier id (if trusted), same tax
      id, and fuzzy name match inside blocks (rapidfuzz, conservative threshold)
   4. learned memory (when labels exist): a known name or id maps to the client's golden key

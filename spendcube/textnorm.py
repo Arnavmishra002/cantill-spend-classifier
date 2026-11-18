@@ -54,7 +54,7 @@ def norm_key(s: str, ocr: bool = True) -> str:
 
 
 def compact_key(s: str, ocr: bool = True) -> str:
-    """norm_key without spaces: 'KEL MONT' == 'KELMONT'."""
+    """norm_key without spaces: 'NORTH WIND' == 'NORTHWIND'."""
     return norm_key(s, ocr).replace(" ", "")
 
 

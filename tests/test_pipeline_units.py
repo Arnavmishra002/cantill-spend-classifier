@@ -58,7 +58,7 @@ def test_parse_date_garbage():
 
 
 def test_ocr_compact_key():
-    assert compact_key("KEL MONT (PTY) LTD") == compact_key("KELMONT (PTY) LTD")
+    assert compact_key("NORTH WIND (PTY) LTD") == compact_key("NORTHWIND (PTY) LTD")
     assert compact_key("C0NVEYOR") == compact_key("CONVEYOR")
     assert compact_key("4510047148") == "4510047148"  # numbers untouched
 
@@ -160,8 +160,8 @@ def test_supplier_norm_suffixes():
 def test_dedupe_suppliers_groups_variants_not_different_firms():
     df = pd.DataFrame({
         "source": "s",
-        "supplier_name": ["KELMONT (PTY) LTD", "KEL MONT PTY LTD", "Kelmont", "KELMORE HYDRAULICS",
-                          "PRAHAVEN (PTY) LTD", "PRAH AVEN"],
+        "supplier_name": ["NORTHWIND (PTY) LTD", "NORTH WIND PTY LTD", "Northwind", "NORTHMORE HYDRAULICS",
+                          "FABRIKAM (PTY) LTD", "FABRI KAM"],
         "supplier_id": ["", "", "", "", "", ""],
     })
     k = dedupe_suppliers(df, DEFAULTS)
