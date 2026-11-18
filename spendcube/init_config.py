@@ -155,8 +155,10 @@ def _status_keyword(value: str) -> str | None:
 GENERIC_NP_RULES = [
     {"name": "intercompany_text", "field": "description",
      "pattern": r"(?i)\b(intercompany|inter-company|inter company|interco|i/c (charge|recharge|payable))\b"},
+    # The tail allows a period after the label ("VAT - 2024 - Q4"). It is one character class and a
+    # group that must start with a letter, so a long run of digits or dashes cannot make it backtrack.
     {"name": "tax_lines", "field": "description",
-     "pattern": r"(?i)^\s*(accrued[\s-]*)?((state\s*(&|and)\s*local\s+tax(es)?)|(sales\s*(&\s*use\s*)?tax(\s+expense)?)|((gst|vat|igst|cgst|sgst|hst|pst|tds|withholding tax|wht)(\s+(input|output|payable|paid|amount|adjustment|payment|return|remittance))?(\s+tax)?)|((input|output)\s+(vat|gst|tax))|((corporate\s+)?income\s+tax(\s+(payment|payable|expense))?))(\s*[-/]?\s*(q[1-4]|fy)?\s*[\d.%/-]*)*\s*$"},
+     "pattern": r"(?i)^\s*(accrued[\s-]*)?((state\s*(&|and)\s*local\s+tax(es)?)|(sales\s*(&\s*use\s*)?tax(\s+expense)?)|((gst|vat|igst|cgst|sgst|hst|pst|tds|withholding tax|wht)(\s+(input|output|payable|paid|amount|adjustment|payment|return|remittance))?(\s+tax)?)|((input|output)\s+(vat|gst|tax))|((corporate\s+)?income\s+tax(\s+(payment|payable|expense))?))[\s\d.%/-]*((q[1-4]|fy)[\s\d.%/-]*)*$"},
     {"name": "finance_and_other_non_supplier", "field": "description",
      "pattern": r"(?i)\b(interest (charge|expense|payment|on loan)s?|bank (charge|fee)s?|royalt(y|ies)|dividends?|loan repayment|revenue share|partner billing|penalty interest|salary|salaries|payroll|donation)\b"},
 ]

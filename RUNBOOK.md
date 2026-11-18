@@ -72,6 +72,8 @@ Review `configs/company_c.yaml` and the `check-config` output (10 minutes at mos
 - [ ] `non_procurement`: keep the generic tax, intercompany and finance rules; check the drafted GL account list.
       If the profile shows tax, intercompany, payroll or finance words in a document type, account or supplier
       type column, add a rule for that column (`field: raw__<column name>` with `values` or a `pattern`).
+      Prefer `values`. Write a `pattern` as plain words joined with `|`; a slow pattern is rejected when the config
+      loads.
 - [ ] `tax_rate_default` on a gross file: the rate used when the tax rate is blank. The draft writes 0.0; set the
       standard rate only if the email or the data says a blank means the standard rate.
 - [ ] `taxonomy.level_columns` are the name columns in order L1 to L4, not code columns (or `format: parent_child`).

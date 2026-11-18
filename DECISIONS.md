@@ -125,7 +125,9 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     A status column is recognised when its values differ only in case or spacing, and a status-like column that
     is not used gives a WARNING. A column that holds a tax amount is never taken as the line amount. The generic
     tax rule also catches labels such as "GST Input Tax" and "Input VAT"; tax services and customs duties stay as
-    spend. Drafting without Claude was scored on 300 random synthetic companies with known answers
+    spend. Every pattern in a config is checked when the config loads: an invalid pattern, or one that takes long
+    on a hostile line, stops the run with one error line that names the rule. A test times every pattern in the
+    code and the configs. Drafting without Claude was scored on 300 random synthetic companies with known answers
     (tests/random_companies.py): exclusion codes, spend per line, supplier grouping and category names were right
     on every record. These companies do not test how well Claude classifies.
 

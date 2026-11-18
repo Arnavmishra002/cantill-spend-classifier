@@ -115,6 +115,34 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+def pattern_problem(pattern: str, limit: float = 0.2) -> str | None:
+    """None for a usable pattern, else one sentence saying what is wrong with it.
+
+    A pattern with nested optional repeats can take minutes on a single line and stall a run
+    (catastrophic backtracking). The probe runs the pattern on short hostile strings of growing
+    length, each built from a word of the pattern followed by a run of digits, dashes or spaces
+    that cannot match to the end. A sound pattern takes microseconds on these; a bad one shows
+    its growth well before the strings get long, so the probe itself stays fast."""
+    import re
+    import time
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        return f"pattern is not a valid regular expression ({e})"
+    words = list(dict.fromkeys(w.lower() for w in re.findall(r"[A-Za-z]{3,}", pattern)))[:12] + [""]
+    for n in (8, 12, 16, 20, 24):
+        for w in words:
+            for run in ("1", "-", " ", "1/", "a", ". "):
+                text = f"{w} " + run * n + " !x"
+                t0 = time.perf_counter()
+                rx.search(text)
+                if time.perf_counter() - t0 > limit:
+                    return ("pattern is too slow: it took over "
+                            f"{limit} s on a {len(text)}-character line. Nested optional repeats cause this; "
+                            "write the pattern as plain words joined with |")
+    return None
+
+
 class ConfigError(ValueError):
     pass
 
@@ -167,6 +195,14 @@ def validate_config(cfg: dict) -> None:
             errs.append(f"exclusion_rules rule {r.get('name')}: needs `field` and `pattern` or `values`")
         if r.get("code") not in EXCLUSION_CODES:
             errs.append(f"exclusion_rules rule {r.get('name')}: `code` must be one of {sorted(EXCLUSION_CODES)}")
+    for kind in ("non_procurement", "exclusion_rules"):
+        for r in cfg.get(kind, []) or []:
+            for key in [k for k in ("pattern",) if isinstance(r.get(k), str)] + \
+                    (["unless"] if isinstance((r.get("unless") or {}).get("pattern"), str) else []):
+                pat = r[key] if key == "pattern" else r["unless"]["pattern"]
+                problem = pattern_problem(pat)
+                if problem:
+                    errs.append(f"{kind} rule {r.get('name')}: {problem}")
     xs = cfg.get("cross_source", {})
     if xs.get("enabled"):
         for k in ("primary", "secondary"):
