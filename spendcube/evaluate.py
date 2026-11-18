@@ -50,7 +50,7 @@ def score(out: pd.DataFrame, labels: pd.DataFrame, tax, restrict_ids=None) -> di
     lv = [f"l{k+1}" for k in range(tax.max_depth)]
     lab = labels[labels["node"].notna()].copy()
     for k in range(tax.max_depth):
-        lab[f"t{k+1}"] = lab["node"].map(lambda n: tax.path_of(n)[k] if k < len(tax.path_of(n)) else "")
+        lab[f"t{k+1}"] = lab["node"].map(lambda n: tax.output_path(n)[k] if k < len(tax.output_path(n)) else "")
     m = out.merge(lab[["record_id"] + [f"t{k+1}" for k in range(tax.max_depth)]], on="record_id")
     m = m[m["include"] == 1]
     if restrict_ids is not None:

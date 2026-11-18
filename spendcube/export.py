@@ -38,7 +38,8 @@ def build_output(df: pd.DataFrame, tax: Taxonomy, columns: list[str]) -> pd.Data
         "spend": df["spend"].round(2),
         "confidence": df["confidence"].fillna(0.0).round(3),
     })
-    paths = df["node"].map(lambda n: tax.path_of(n) if isinstance(n, str) and n in tax.nodes else ())
+    # names exactly as written in the tree file
+    paths = df["node"].map(lambda n: tax.output_path(n) if isinstance(n, str) and n in tax.nodes else ())
     inc = out["include"] == 1
     for k, lv in enumerate(levels):
         out[lv] = paths.map(lambda p: p[k] if k < len(p) else "").where(inc, "")

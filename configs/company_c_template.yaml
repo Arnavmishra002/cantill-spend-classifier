@@ -66,7 +66,7 @@ non_procurement:
   pattern: (?i)\b(intercompany|inter-company|inter company|interco|i/c (charge|recharge|payable))\b
 - name: tax_lines
   field: description
-  pattern: (?i)^\s*(accrued[\s-]*)?((state\s*(&|and)\s*local\s+tax(es)?)|(sales\s*(&\s*use\s*)?tax(\s+expense)?)|(gst|vat|igst|cgst|sgst|tds|withholding tax|wht)(\s+(input|output|payable|paid|amount|adjustment))?)\s*-?\s*[\d.%]*\s*$
+  pattern: (?i)^\s*(accrued[\s-]*)?((state\s*(&|and)\s*local\s+tax(es)?)|(sales\s*(&\s*use\s*)?tax(\s+expense)?)|((gst|vat|igst|cgst|sgst|hst|pst|tds|withholding tax|wht)(\s+(input|output|payable|paid|amount|adjustment|payment|return|remittance))?(\s+tax)?)|((input|output)\s+(vat|gst|tax))|((corporate\s+)?income\s+tax(\s+(payment|payable|expense))?))(\s*[-/]?\s*(q[1-4]|fy)?\s*[\d.%/-]*)*\s*$
 - name: finance_and_other_non_supplier
   field: description
   pattern: (?i)\b(interest (charge|expense|payment|on loan)s?|bank (charge|fee)s?|royalt(y|ies)|dividends?|loan repayment|revenue share|partner billing|penalty interest|salary|salaries|payroll|donation)\b

@@ -42,7 +42,15 @@ class Taxonomy:
         self.max_depth = max_depth
         self.by_path = {n.path: n.id for n in nodes.values()}
         self.leaves = [n.id for n in nodes.values() if not n.children]
+        # cleaned path -> the same names exactly as written in the tree file (set by load_taxonomy)
+        self.raw_paths: dict[tuple, tuple] = {}
         self._mark_general()
+
+    def output_path(self, nid: str) -> tuple[str, ...]:
+        """The node's path as written in the tree file. Matching and prompts use cleaned names;
+        the output must carry the file's own spelling, spaces and symbols."""
+        p = self.nodes[nid].path
+        return self.raw_paths.get(p, p)
 
     def _mark_general(self):
         """Among siblings, a leaf that repeats its parent's name ('Pumps > Pumps') or is
@@ -173,6 +181,7 @@ def load_taxonomy(cfg: dict, data_dir: Path) -> Taxonomy:
     tcfg = cfg["taxonomy"]
     df = read_table(resolve_file(tcfg["file"], cfg, data_dir), sheet=tcfg.get("sheet"))
     df.columns = [clean_text(c) for c in df.columns]
+    raw = df.astype(str)             # names exactly as written, kept for the output
     df = df.map(clean_text)
     fmt = tcfg.get("format", "auto")
     cols = tcfg.get("level_columns")
@@ -201,7 +210,16 @@ def load_taxonomy(cfg: dict, data_dir: Path) -> Taxonomy:
             return path(parent.get(i, ""), seen + (i,)) + (name[i],)
         paths = [path(i) for i in df[idc] if i not in kids] or [path(i) for i in df[idc]]
         d = {path(i): descs.get(i, "") for i in df[idc]} if descs else None
-        return Taxonomy.from_paths(paths, d)
+        tax = Taxonomy.from_paths(paths, d)
+        raw_name = dict(zip(df[idc], raw[nc]))
+
+        def raw_path(i, seen=()):
+            if not i or i not in name or i in seen:
+                return ()
+            return raw_path(parent.get(i, ""), seen + (i,)) + ((raw_name[i],) if name[i] else ())
+        for i in df[idc]:
+            tax.raw_paths.setdefault(tuple(x for x in path(i) if x), raw_path(i))
+        return tax
     # wide
     if not cols:
         numbered = sorted(((n, c) for c in df.columns if (n := _level_number(c)) is not None))
@@ -214,9 +232,19 @@ def load_taxonomy(cfg: dict, data_dir: Path) -> Taxonomy:
         # one column holds the whole path, such as "IT > Hardware > Laptops"
         paths = [tuple(x.strip() for x in str(v).split(sep) if x.strip()) for v in df[cols[0]]]
         descs = dict(zip(paths, df[desc_col])) if desc_col and desc_col in df.columns else None
-        return Taxonomy.from_paths(paths, descs)
+        tax = Taxonomy.from_paths(paths, descs)
+        for p_clean, v_raw in zip(paths, raw[cols[0]]):
+            parts = [x.strip() for x in str(v_raw).split(sep)]
+            parts = tuple(x for x in parts if clean_text(x))
+            if len(parts) == len(p_clean):
+                tax.raw_paths.setdefault(p_clean, parts)
+        return tax
     paths = [tuple(r) for r in df[cols].itertuples(index=False)]
     descs = None
     if desc_col and desc_col in df.columns:
         descs = {tuple(x for x in r[:-1] if x): r[-1] for r in df[cols + [desc_col]].itertuples(index=False)}
-    return Taxonomy.from_paths(paths, descs)
+    tax = Taxonomy.from_paths(paths, descs)
+    for p_clean, p_raw in zip(paths, raw[cols].itertuples(index=False)):
+        # the leaf's own row gives the spelling of every level; blank levels are dropped as in from_paths
+        tax.raw_paths.setdefault(tuple(c for c in p_clean if c), tuple(r for r, c in zip(p_raw, p_clean) if c))
+    return tax

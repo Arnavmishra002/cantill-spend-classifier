@@ -40,7 +40,7 @@ def validate_output(out: pd.DataFrame, df: pd.DataFrame, tax: Taxonomy, columns:
         errs.append("confidence must be within [0,1]")
     # categories exist in the tree, exact names, blank below the tree's depth
     levels = [x for x in columns if x.startswith("l") and x[1:].isdigit()]
-    valid_paths = {n.path for n in tax.nodes.values()}
+    valid_paths = {tax.output_path(n.id) for n in tax.nodes.values()} | {n.path for n in tax.nodes.values()}
     paths = out[levels].fillna("").apply(lambda r: tuple(v for v in r if v), axis=1)
     inc = out["include"] == 1
     not_in_tree = ~paths.isin(valid_paths)

@@ -104,6 +104,6 @@ spendcube/
   data/       fx_monthly_usd.csv (public ECB rates), offline_calibration.json
 scripts/california_check.py  external check on public California purchase data (not stored here)
 scripts/profile_data.py      prints column values, keyword hits and top suppliers to review a drafted config
-tests/                       unit tests on synthetic data
+tests/                       unit tests on synthetic data, with 60 random unseen companies scored against known answers
 submission/                  output files only
 ```

@@ -7,7 +7,8 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
 
 1. Excluded rows. One row per input record. If the input repeats a record id, the first row keeps the id and
    later rows get `#2`, `#3`, so every input id is still in the output and ids stay unique. A row with nothing in
-   any cell is not a record. A totals line at the end of an export (a cell that reads Total or Grand Total, only
+   any cell is not a record. l1 to l4 carry each name exactly as written in the tree file, with its spacing and
+   symbols; only matching uses a cleaned copy. A totals line at the end of an export (a cell that reads Total or Grand Total, only
    numbers in the other cells, no id of its own) is not a record either; the run logs it. An excluded row has `include=0`, a code, `spend=0`, blank l1 to l4 as in
    the template's example row, its supplier and item keys, and the confidence of the exclusion.
 2. Hard lines. Every included line gets a leaf at the deepest level, because a guessed leaf can be right and a
@@ -121,6 +122,12 @@ tool lines, B has 41,028 lines. No data rows are reproduced. Every rule is a con
     their own code. A paid flag only gets a note: as in item 18, an unpaid line can still be approved. A tree given
     as one column of whole paths is split on its separator. A workbook that holds both the tree and the lines is
     read sheet by sheet. A file without an amount column (a readme, a data dictionary) is not used as input.
+    A status column is recognised when its values differ only in case or spacing, and a status-like column that
+    is not used gives a WARNING. A column that holds a tax amount is never taken as the line amount. The generic
+    tax rule also catches labels such as "GST Input Tax" and "Input VAT"; tax services and customs duties stay as
+    spend. Drafting without Claude was scored on 300 random synthetic companies with known answers
+    (tests/random_companies.py): exclusion codes, spend per line, supplier grouping and category names were right
+    on every record. These companies do not test how well Claude classifies.
 
 ## Classification
 

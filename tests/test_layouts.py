@@ -204,3 +204,138 @@ def test_stray_files_in_the_folder_are_not_sources(tmp_path):
     assert [s["file"][0] for s in cfg["sources"]] == ["c_invoice_lines.csv"]
     assert "not a transaction file" in text and "TODO" not in yaml.safe_dump(cfg["sources"])
     assert len(run_it(tmp_path)) == 120
+
+
+ODD_TREE = [("IT  Hardware", "End User ", "Laptops and Notebooks"), ("IT  Hardware", "End User ", "Monitors™"),
+            ("Facilities", "Cleaning m²", " Janitorial"), ("Facilities", "Cleaning m²", "Window  Cleaning"),
+            ("Services", "Legal – External", "Litigation")]
+
+
+def _exact(folder: Path) -> set:
+    out = run_it(folder)
+    inc = out[out["include"] == "1"]
+    assert len(inc) > 0
+    return set(map(tuple, inc[["l1", "l2", "l3"]].values))
+
+
+def test_category_names_are_written_exactly_as_in_a_wide_tree(tmp_path):
+    lines().to_csv(tmp_path / "lines.csv", index=False)
+    pd.DataFrame(ODD_TREE, columns=["category_l1", "category_l2", "category_l3"]).to_csv(tmp_path / "tree.csv", index=False)
+    draft(tmp_path)
+    assert _exact(tmp_path) <= set(ODD_TREE)             # double spaces, trailing spaces and symbols kept
+
+
+def test_category_names_are_written_exactly_as_in_a_parent_child_tree(tmp_path):
+    lines().to_csv(tmp_path / "lines.csv", index=False)
+    rows, ids = [], {}
+    for path in ODD_TREE:
+        for d in range(1, 4):
+            if path[:d] not in ids:
+                ids[path[:d]] = f"K{len(ids) + 1:03d}"
+                rows.append({"Category ID": ids[path[:d]], "Parent ID": ids.get(path[:d - 1], ""), "Category Name": path[d - 1]})
+    pd.DataFrame(rows).to_csv(tmp_path / "tree.csv", index=False)
+    cfg, _ = draft(tmp_path)
+    assert cfg["taxonomy"]["format"] == "parent_child"
+    assert _exact(tmp_path) <= set(ODD_TREE)
+
+
+def test_category_names_from_a_path_column_keep_their_symbols(tmp_path):
+    lines().to_csv(tmp_path / "lines.csv", index=False)
+    pd.DataFrame({"Category Path": [" > ".join(t) for t in ODD_TREE]}).to_csv(tmp_path / "tree.csv", index=False)
+    draft(tmp_path)
+    assert _exact(tmp_path) <= {tuple(x.strip() for x in t) for t in ODD_TREE}
+
+
+def _cols(folder: Path) -> tuple[dict, dict, str]:
+    cfg, text = draft(folder)
+    return cfg, cfg["sources"][0]["columns"], text
+
+
+@pytest.mark.parametrize("order", [["VAT Amount", "Gross Amount"], ["Gross Amount", "VAT Amount"],
+                                   ["Importe IVA", "Importe IVA incluido"], ["Montant TVA", "Montant TTC"]])
+def test_amount_and_tax_amount_are_told_apart_in_any_column_order(tmp_path, order):
+    df = lines().drop(columns=["Amount"])
+    net = [100.0 + i for i in range(len(df))]
+    tax_col, gross_col = sorted(order, key=lambda c: 0 if c in ("VAT Amount", "Importe IVA", "Montant TVA") else 1)
+    vals = {tax_col: [f"{x * 0.2:.2f}" for x in net], gross_col: [f"{x * 1.2:.2f}" for x in net]}
+    for c in order:                                  # the file's column order
+        df[c] = vals[c]
+    df.to_csv(tmp_path / "lines.csv", index=False)
+    tree().to_csv(tmp_path / "tree.csv", index=False)
+    cfg, cols, _ = _cols(tmp_path)
+    assert cols["amount"] == gross_col and cols["tax_amount"] == tax_col and cfg["sources"][0]["amount_type"] == "gross"
+    out = run_it(tmp_path)
+    assert out["spend"].astype(float).sum() == pytest.approx(sum(net), rel=1e-4)       # tax removed
+
+
+@pytest.mark.parametrize("name_col,id_col", [("Nombre del proveedor", "Código proveedor"), ("Nom du fournisseur", "Code fournisseur"),
+                                             ("Kreditor Name", "Lieferantennummer"), ("Proveedor", "Código proveedor")])
+def test_supplier_headers_in_other_languages(tmp_path, name_col, id_col):
+    df = lines().rename(columns={"Supplier Name": name_col})
+    df[id_col] = [f"V{1000 + i % 4}" for i in range(len(df))]
+    df.to_csv(tmp_path / "lines.csv", index=False)
+    tree().to_csv(tmp_path / "tree.csv", index=False)
+    _, cols, text = _cols(tmp_path)
+    assert cols["supplier_name"] == name_col and cols["supplier_id"] == id_col and "no supplier column" not in text
+
+
+def test_no_supplier_column_is_a_warning(tmp_path):
+    lines().drop(columns=["Supplier Name"]).to_csv(tmp_path / "lines.csv", index=False)
+    tree().to_csv(tmp_path / "tree.csv", index=False)
+    _, _, text = _cols(tmp_path)
+    assert "WARNING" in text and "no supplier column found" in text
+
+
+def test_status_column_with_case_and_space_variants_is_still_the_status(tmp_path):
+    base = ["Paid", "Approved", "Posted", "Cancelled", "Rejected", "On Hold", "Disputed"]
+    n = 210
+    st = [[b.upper(), f" {b} ", b.lower()][i % 3] for i, b in enumerate(base * (n // 7))]     # 21 spellings
+    lines(n, Status=st).to_csv(tmp_path / "lines.csv", index=False)
+    tree().to_csv(tmp_path / "tree.csv", index=False)
+    cfg, cols, _ = _cols(tmp_path)
+    assert cols["status"] == "Status"
+    out = run_it(tmp_path)
+    assert out["exclusion_reason"].value_counts().to_dict() == {"": 90, "NOT_APPROVED": 90, "CANCELLED": 30}
+
+
+def test_a_status_header_that_is_not_used_is_a_warning(tmp_path):
+    lines(120, Status=[f"batch state {i}" for i in range(120)]).to_csv(tmp_path / "lines.csv", index=False)
+    tree().to_csv(tmp_path / "tree.csv", index=False)
+    _, cols, text = _cols(tmp_path)
+    assert "status" not in cols and "look like a status but are not used" in text
+
+
+def test_generic_tax_labels_are_non_procurement(tmp_path):
+    df = lines()
+    labels = ["GST Input Tax", "VAT payable", "Sales Tax", "Withholding tax", "Input VAT", "VAT payment Q1"]
+    keep = ["GST consulting fees", "Tax advisory services", "Customs duty on imports"]
+    for i, t in enumerate(labels + keep):
+        df.loc[i, "Line Description"] = t
+    df.to_csv(tmp_path / "lines.csv", index=False)
+    tree().to_csv(tmp_path / "tree.csv", index=False)
+    draft(tmp_path)
+    out = run_it(tmp_path).set_index("record_id")
+    assert (out.loc[[f"C{i:05d}" for i in range(len(labels))], "exclusion_reason"] == "NON_PROCUREMENT").all()
+    assert (out.loc[[f"C{i:05d}" for i in range(len(labels), len(labels) + len(keep))], "exclusion_reason"] == "").all()
+
+
+def test_a_totals_line_does_not_hide_a_flag_column(tmp_path):
+    df = lines().drop(columns=["Status"])
+    df.insert(0, "Approved", ["Y", "Y", "N"] * (len(df) // 3))
+    body = df.to_csv(index=False)
+    (tmp_path / "lines.csv").write_text(body + "Total" + "," * (len(df.columns) - 1) + "\n")
+    tree().to_csv(tmp_path / "tree.csv", index=False)
+    cfg, _, text = _cols(tmp_path)
+    assert [r["field"] for r in cfg["exclusion_rules"]] == ["Approved"] and "totals line" in text
+    out = run_it(tmp_path)
+    assert len(out) == len(df) and (out["exclusion_reason"] == "NOT_APPROVED").sum() == len(df) // 3
+
+
+def test_path_tree_with_few_branches_is_split(tmp_path):
+    lines().to_csv(tmp_path / "lines.csv", index=False)
+    paths = ["Fleet / Fuel / Diesel", "Fleet / Tyres / Truck Tyres", "IT / Tracking / Telematics", "Insurance / Motor / Fleet Cover",
+             "Haulage / Third Party / Loads", "Warehouse / Equipment / Forklifts", "Warehouse / Consumables / Pallets"]
+    pd.DataFrame({"Category": paths}).to_csv(tmp_path / "tree.csv", index=False)
+    cfg, _ = draft(tmp_path)
+    assert cfg["taxonomy"].get("path_separator") in ("/", " / ")
+    assert load_taxonomy(load_config(str(tmp_path / "c.yaml")), tmp_path).max_depth == 3

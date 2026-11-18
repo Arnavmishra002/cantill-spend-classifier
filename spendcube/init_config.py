@@ -25,7 +25,7 @@ import pandas as pd
 import yaml
 
 from .config import DEFAULTS
-from .ingest import excel_sheets, read_table
+from .ingest import drop_summary_rows, excel_sheets, read_table
 from .textnorm import ISO_CCY, clean_text, normalize_currency, parse_date_series, parse_number_series
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,9 @@ log = logging.getLogger(__name__)
 # Each list is in order of preference; the first pattern scores highest. Translations of a
 # pattern (German, French, Spanish, Italian, Portuguese, Dutch) share its position.
 HEADER_HINTS = {
-    "record_id": [r"^(line|record|row|txn|transaction|invoice[\s_]*line|entry)[\s_]?(id|key)$", r"^id$",
+    "record_id": [r"^(line|record|row|txn|transaction|invoice[\s_]*line|entry)[\s_]?(id|key)$|"
+                  r"^(id|identifiant|identificador)[\s_]*(de[\s_]*)?(la[\s_]*)?(ligne|linea|riga|linha|zeile|position)$|"
+                  r"^(zeilen|positions)[\s_]*(id|nr|nummer)$", r"^id$",
                   r"line[\s_]*id", r"(record|row|line)[\s_]*(no|number|#)$"],
     "invoice_number": [r"inv(oice)?[\s_]*(no|num|number|#|id|ref)|(rechnungs|beleg)[\s_-]*(nr|nummer)|"
                        r"(n°|num[eé]ro)[\s_]*(de[\s_]*)?facture|(n[uú]mero|no)[\s_]*(de[\s_]*)?factura|"
@@ -52,11 +54,15 @@ HEADER_HINTS = {
                      r"creat(ion|ed)[\s_]*(date|on)", r"approv(al|ed)[\s_]*date"],
     "supplier_name": [r"(supplier|vendor|creditor|payee|seller)[\s_]*(name)?$|"
                       r"^(lieferant|kreditor|fournisseur|proveedor|fornitore|fornecedor|leverancier)(en)?"
-                      r"[\s_]*(name|nom|nombre|nome|naam)?$",
+                      r"[\s_]*(name|nom|nombre|nome|naam)?$|"
+                      r"^(nom|nombre|nome|name|naam)[\s_]*(du|de|del|della|do|des|van)?[\s_]*(la[\s_]*)?"
+                      r"(fournisseur|proveedor|fornitore|fornecedor|leverancier|lieferant(en)?|kreditor)s?$",
                       r"(supplier|vendor)[\s_]*name", r"party[\s_]*name"],
     "supplier_id": [r"(supplier|vendor|creditor|payee)[\s_]*(id|code|no|nr|num|number|#|key|ref|account|acct)$|"
                     r"(lieferant|kreditor|fournisseur|proveedor|fornitore|fornecedor|leverancier)(en)?[\s_]*"
-                    r"(nr|nummer|no|id|code|codigo|numero|n°)",
+                    r"(nr|nummer|no|id|code|codigo|numero|n°)|"
+                    r"^(code|codigo|numero|no|n°|id|identifiant|nummer|nr)[\s_]*(du|de|del|della|do)?[\s_]*"
+                    r"(fournisseur|proveedor|fornitore|fornecedor|leverancier|lieferant(en)?|kreditor)s?$",
                     r"(supplier|vendor|creditor)[\s_]*(id|code|no|number|#)\b", r"^vendor$"],
     "supplier_tax_id": [r"gstin", r"\bvat[\s_]*(no|number|id|reg)", r"tax[\s_]*(id|no|number|reg)", r"\bpan\b",
                         r"\babn\b", r"\bein\b", r"\bcnpj\b"],
@@ -150,7 +156,7 @@ GENERIC_NP_RULES = [
     {"name": "intercompany_text", "field": "description",
      "pattern": r"(?i)\b(intercompany|inter-company|inter company|interco|i/c (charge|recharge|payable))\b"},
     {"name": "tax_lines", "field": "description",
-     "pattern": r"(?i)^\s*(accrued[\s-]*)?((state\s*(&|and)\s*local\s+tax(es)?)|(sales\s*(&\s*use\s*)?tax(\s+expense)?)|(gst|vat|igst|cgst|sgst|tds|withholding tax|wht)(\s+(input|output|payable|paid|amount|adjustment))?)\s*-?\s*[\d.%]*\s*$"},
+     "pattern": r"(?i)^\s*(accrued[\s-]*)?((state\s*(&|and)\s*local\s+tax(es)?)|(sales\s*(&\s*use\s*)?tax(\s+expense)?)|((gst|vat|igst|cgst|sgst|hst|pst|tds|withholding tax|wht)(\s+(input|output|payable|paid|amount|adjustment|payment|return|remittance))?(\s+tax)?)|((input|output)\s+(vat|gst|tax))|((corporate\s+)?income\s+tax(\s+(payment|payable|expense))?))(\s*[-/]?\s*(q[1-4]|fy)?\s*[\d.%/-]*)*\s*$"},
     {"name": "finance_and_other_non_supplier", "field": "description",
      "pattern": r"(?i)\b(interest (charge|expense|payment|on loan)s?|bank (charge|fee)s?|royalt(y|ies)|dividends?|loan repayment|revenue share|partner billing|penalty interest|salary|salaries|payroll|donation)\b"},
 ]
@@ -161,7 +167,7 @@ PLACEHOLDERS = {"-", "--", "---", "n/a", "na", "n.a.", "#n/a", "null", "none", "
 
 def _score_header(col: str, field: str) -> float:
     # 'Supplier No.', 'Vendor-ID' and 'Vendor #' become 'supplier no', 'vendor id' and 'vendor #'
-    c = re.sub(r"[.\-:]+", " ", col.strip().lower()).strip()
+    c = re.sub(r"[.\-:]+", " ", _fold(col)).strip()        # 'Código' reads as 'codigo'
     c = re.sub(r"\s+", " ", c)
     for k, rx in enumerate(HEADER_HINTS.get(field, [])):
         if re.search(rx, c):
@@ -183,6 +189,7 @@ def profile_columns(df: pd.DataFrame, n=3000) -> dict:
             "blank": float((v == "").mean()),
             "unique_ratio": float(nb.nunique() / max(len(nb), 1)),
             "nunique": int(nb.nunique()),
+            "nunique_folded": int(nb.map(_fold).nunique()),      # 'PAID', ' Paid ' and 'paid' count once
             "num_rate": float(num.notna().mean()) if len(nbv) else 0.0,
             "placeholder_rate": float(filler.mean()) if len(nb) else 0.0,
             "date_rate": float(dt.notna().mean()) if len(nb) else 0.0,
@@ -197,16 +204,22 @@ def profile_columns(df: pd.DataFrame, n=3000) -> dict:
 
 def heuristic_roles(prof: dict) -> dict:
     """Return {field: (column, score)}."""
-    cands = {}
-    for f in HEADER_HINTS:
-        best = None
-        for c, p in prof.items():
+    # every (field, column) pair whose header and values both fit, best first
+    pairs = []
+    for fi, f in enumerate(HEADER_HINTS):
+        for ci, (c, p) in enumerate(prof.items()):
             h = _score_header(c, f)
             v = 0.0
             if f in ("amount", "tax_amount", "unit_price", "quantity", "fx_rate", "tax_rate"):
                 v = p["num_rate"] if p["num_rate"] > 0.9 else -1
                 if f == "amount" and v < 0 and h >= 0.6 and p["num_rate"] > 0.6:
                     v = p["num_rate"]       # the header says amount and most values parse
+                gross_like = bool(re.search(GROSS_HEADER, c))      # 'Importe IVA incluido' is an amount
+                if f == "amount" and not gross_like and (_score_header(c, "tax_amount") > 0
+                                                         or _score_header(c, "tax_rate") > 0):
+                    v = -1                  # a tax column is never the line amount
+                if f in ("tax_amount", "tax_rate") and gross_like:
+                    v = -1                  # and an amount that includes tax is not the tax
             elif f in ("date", "posting_date"):
                 v = p["date_rate"] if p["date_rate"] > 0.6 else -1
             elif f == "currency":
@@ -226,24 +239,19 @@ def heuristic_roles(prof: dict) -> dict:
             elif f == "supplier_id":
                 v = 1.0 if (_code_like(p["samples"]) or p["num_rate"] > 0.8) else 0.2
             elif f == "status":
-                v = 1.0 if 1 < p["nunique"] <= 15 and p["alpha_rate"] > 0.8 else -1
+                v = 1.0 if 1 < p.get("nunique_folded", p["nunique"]) <= 25 and p["alpha_rate"] > 0.8 else -1
             if h <= 0 or v < 0:
                 continue
-            sc = h + 0.5 * v
-            if best is None or sc > best[1]:
-                best = (c, sc)
-        if best:
-            cands[f] = best
-    # a column may serve only one role: keep the higher score (a unique id column is
-    # always the record id first)
-    if "record_id" in cands:
-        cands["record_id"] = (cands["record_id"][0], cands["record_id"][1] + 10)
-    used = {}
-    for f, (c, sc) in sorted(cands.items(), key=lambda x: -x[1][1]):
-        if c in used:
+            # a unique id column is always the record id first
+            pairs.append((h + 0.5 * v + (10 if f == "record_id" else 0), -fi, -ci, f, c))
+    # A column serves one role and a role takes one column. The best pair wins; a role whose
+    # best column is taken (a VAT amount column also reads as an amount) takes its next best.
+    roles, used = {}, {}
+    for sc, _, _, f, c in sorted(pairs, reverse=True):
+        if f in roles or c in used:
             continue
+        roles[f] = (c, sc)
         used[c] = f
-    roles = {f: cands[f] for f in cands if used.get(cands[f][0]) == f}
     # fallback for record id: first fully unique column
     if "record_id" not in roles:
         for c, p in prof.items():
@@ -607,8 +615,10 @@ def _path_separator(values: pd.Series) -> str | None:
         has = v.str.contains(sep, regex=False)
         if has.mean() < 0.8:
             continue
+        if sep in (">", "»", "|", "::", "\\"):
+            return sep                       # these never appear inside a category name
         first = v[has].str.split(sep, regex=False).str[0].str.strip()
-        if first.nunique() <= 0.6 * int(has.sum()):
+        if first.nunique() < int(has.sum()):  # a slash or dash separates levels only if branches repeat
             return sep
     return None
 
@@ -727,6 +737,9 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
         if df.empty or len(df.columns) < 2:
             notes.append(f"{p.name}: no table found in it; skipped")
             continue
+        df, n_tot = drop_summary_rows(df)        # the run drops a totals line; the draft must not see it either
+        if n_tot:
+            notes.append(f"{p.name}: {n_tot} totals line(s) at the end are not records and are left out")
         if sheet_note:
             notes.append(f"{p.name}: {sheet_note}")
         df.columns = [clean_text(c) for c in df.columns]
@@ -812,6 +825,9 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
                **({"sheet": sheet} if sheet is not None else {}),
                "record_id": {"column": rid_col},
                "amount_type": "net", "columns": cols}
+        if "supplier_name" not in cols and "supplier_id" not in cols:
+            warnings_top.append(f"WARNING {p.name}: no supplier column found, so every line would share one supplier "
+                                f"key. Set columns.supplier_name or columns.supplier_id.")
         amt_col = roles.get("amount", "")
         if not amt_col:
             cols["amount"] = "TODO"
@@ -878,6 +894,12 @@ def draft_config(data: str, taxonomy: str, out: str, company: str = "C", use_llm
             if fl.mean() > 0.3:
                 warnings_top.append(f"WARNING {p.name}: the drafted flag rules exclude {fl.mean():.0%} of lines. "
                                     f"Check exclusion_rules before running.")
+        if "status" not in cols and not frules:
+            unused_status = [c for c in df.columns if _score_header(c, "status") > 0 and c not in used_cols]
+            unused_status = [c for c in unused_status if not any(f"`{c}`" in n for n in notes)]
+            if unused_status:
+                warnings_top.append(f"WARNING {p.name}: column(s) {unused_status} look like a status but are not used, "
+                                    f"so no line is excluded for status. Check columns.status and status_map.")
         if "currency" in roles:
             raw_cur = df[roles["currency"]].astype(str).str.strip().str.upper()
             cur = normalize_currency(raw_cur, reporting)
