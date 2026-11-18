@@ -7,6 +7,8 @@ Target: pushed by 11:15. Hard stop: 12:00.
 
 Check the inbox that received the challenge email, including its spam folder, for the blind-test email at 10:00.
 Run every command in a normal terminal, not inside a Claude Code sandbox, which blocks the API calls.
+Open the billing page of the Claude console and note the credit balance. The three cost caps in step 3 must total
+at least 5 USD less than that balance, because a run that empties the balance loses Claude part-way through.
 
 
 ```bash
@@ -73,23 +75,36 @@ Review `configs/company_c.yaml` and the `check-config` output (10 minutes at mos
 
 ## 3. Run the three companies
 
-Start C first: it takes longest and is worth 50 points. Run A2 and B2 at the same time in a second terminal.
+First run C once without Claude. It takes under a minute and costs nothing:
 
 ```bash
-python run.py --config configs/company_c.yaml --data data/C  --out submission/arnav_mishra__C.csv --max-llm-cost 48
+python run.py --config configs/company_c.yaml --data data/C  --out submission/arnav_mishra__C.csv --no-llm
+```
+
+Check its summary (row count, exclusions, spend, suppliers) and the largest lines in `out/arnav_mishra__C_audit.csv`
+before paying for Claude. A config fix made after the paid run can change the cached requests, and then the run is
+paid for again. Write `company_context` before the paid run for the same reason.
+
+Then start C with Claude: it takes longest and is worth 50 points. Run A2 and B2 at the same time in a second
+terminal.
+
+```bash
+python run.py --config configs/company_c.yaml --data data/C  --out submission/arnav_mishra__C.csv --max-llm-cost 41
 ```
 
 ```bash
 python run.py --config configs/company_a.yaml --data data/A2 --out submission/arnav_mishra__A2.csv --max-llm-cost 2
-python run.py --config configs/company_b.yaml --data data/B2 --out submission/arnav_mishra__B2.csv --max-llm-cost 10
+python run.py --config configs/company_b.yaml --data data/B2 --out submission/arnav_mishra__B2.csv --max-llm-cost 9
 ```
 
 Measured on Monday: A (65,549 lines) about 2 minutes, B (41,028 lines) about 6 minutes and 8.18 USD with no cache, 2,000
 California lines with a 200-leaf tree 2 minutes and 3.30 USD, 5,000 California lines 2.3 minutes and 5.94 USD. A
 25,000-line C of unique text is projected (not measured) at 12 to 15 minutes and about 30 USD; the drafted cap is
-60 USD. Test-day budget agreed with Arnav: 60 USD in total, set by the flags above (C 48, B2 10, A2 2). A full B run cost 8.18 USD, so B2 fits even at B's size. If a run
-prints "LLM cost cap reached", the lowest-spend units were classified offline; that is acceptable. Raise a flag only
-if there is budget left, and the cache then pays only for the rest.
+60 USD. On 18 November the API credit left was just under 60 USD, so the flags above total 52 USD (C 41, B2 9,
+A2 2). The rest covers the calls outside the caps (init-config, scope notes, health checks) and a
+partial re-run. A full B run cost 8.18 USD, so B2 fits even at B's size. If a run prints "LLM cost cap reached",
+the lowest-spend units were classified offline; that is acceptable. When A2 and B2 have finished, their summaries
+show what they really cost; raise C's flag only by what is then left, and the cache pays only for the rest.
 
 Each run prints an LLM health line per model first, then ends with `=== RUN OK ===` (validation passed), or prints
 `OUTPUT VALIDATION FAILED` or an `ERROR:` line and exits with code 2. If the summary says `LLM : NOT USED`, the key
@@ -128,6 +143,7 @@ Open the repository on GitHub and confirm the four files are there.
 | `No file matching ...` | The file name differs. Pass the right folder; for A2 or B2 copy the file inside `data/A2` to the expected name; for C fix `configs/company_c.yaml`. |
 | `ERROR: config ... column ... is not in the header` | Fix the column name in `configs/company_c.yaml`. |
 | `class source` is mostly `retrieval` and the log shows failed batches | Claude rejected the requests. Set `classification.llm.shortlist_above_leaves` in the C config to a number below the tree's leaf count and re-run; each batch then offers only its candidate leaves. |
+| Batches fail with "credit balance is too low" | The API credit ran out. The run still finishes on the offline layers. Add credit in the console and re-run; the cache keeps what was already paid for. |
 | `LLM : NOT USED` | Check `.env` and the network, then re-run. Use `--require-llm` to make the run stop instead. |
 | Validation failure on categories | Check the order of `taxonomy.level_columns` in the C config. |
 | Out of time | `--no-llm` runs everything offline in under two minutes (lower accuracy). |
