@@ -1,0 +1,185 @@
+# Company C config, drafted by `run.py init-config` on 19 November 2026 and reviewed by hand.
+# Review decisions (config only, no code):
+#  - status: Approved counts, Cancelled is CANCELLED (24,895 and 106 lines).
+#  - NON_PROCUREMENT, as the brief defines it (taxes, revenue, royalties, partner billings and similar):
+#    tax and royalty GL accounts; joint interest billing (JIB) vouchers from partners; director fees, union
+#    dues withheld from pay and donations; revenue distributions and refunds; tax-only invoices and tax item
+#    lines.
+#  - Midstream gathering, transportation and processing fees booked to revenue clearing or receivable
+#    accounts stay as spend: the text shows services bought from third parties, and the tree has a
+#    Marketing & Logistics branch for them. company_context says so.
+#  - Taxes paid to a consultant for tax advice stay as spend (a service bought from a supplier).
+#  - Amounts are net USD; no currency column.
+company: C
+reporting_currency: USD
+search_dirs: []
+taxonomy:
+  file: category_tree_C.csv
+  format: wide
+  level_columns:
+  - level_1
+  - level_2
+  - level_3
+  - level_4
+sources:
+- name: invoice_lines
+  file:
+  - invoice_lines.csv
+  record_id:
+    column: line_id
+  amount_type: net
+  columns:
+    invoice_line: invoice_line
+    date: invoice_date
+    supplier_name: supplier_name
+    quantity: quantity
+    status: status
+    description:
+    - product_service_description
+    - line_description
+    amount: line_amount_usd
+    invoice_number: invoice_number
+    uom: uom
+    gl_description: gl_account_description
+    entity: buyer_entity
+    unit_price: rate_usd
+    item_code: product_service_code
+    document_type: submission_type
+    context:
+    - invoice_description
+    - product_service_description
+  dayfirst: false
+  status_map:
+    include:
+    - approved
+    CANCELLED:
+    - cancelled
+    NOT_APPROVED: []
+    unknown_status_outcome: NOT_APPROVED
+  currency_default: USD
+exclusion_precedence:
+- CANCELLED
+- NOT_APPROVED
+- NON_PROCUREMENT
+- DUPLICATE
+non_procurement:
+- name: intercompany_text
+  field: description
+  pattern: (?i)\b(intercompany|inter-company|inter company|interco|i/c (charge|recharge|payable))\b
+- name: tax_lines
+  field: description
+  pattern: (?i)^\s*(accrued[\s-]*)?((state\s*(&|and)\s*local\s+tax(es)?)|(sales\s*(&\s*use\s*)?tax(\s+expense)?)|((gst|vat|igst|cgst|sgst|hst|pst|tds|withholding
+    tax|wht)(\s+(input|output|payable|paid|amount|adjustment|payment|return|remittance))?(\s+tax)?)|((input|output)\s+(vat|gst|tax))|((corporate\s+)?income\s+tax(\s+(payment|payable|expense))?))[\s\d.%/-]*((q[1-4]|fy)[\s\d.%/-]*)*$
+- name: finance_and_other_non_supplier
+  field: description
+  pattern: (?i)\b(interest (charge|expense|payment|on loan)s?|bank (charge|fee)s?|royalt(y|ies)|dividends?|loan
+    repayment|revenue share|partner billing|penalty interest|salary|salaries|payroll|donation)\b
+- name: suspect_gl_accounts
+  field: gl_description
+  values:
+  - Accrued Ad Valorem Taxes
+  - Accrued Severance Taxes
+  - Director Fees
+  - Donations
+  - Employee Deductions Payable
+  - LOE - Impact Fee & Other Tax
+  - MMS Royalty Payable
+  - State Royalty Payable
+- name: revenue_distributions_and_refunds
+  field: gl_description
+  values:
+  - Other O&G Revenue
+  - LOE-Saltwater Disposal Revenue
+  - AR JIB Deposits Clearing
+- name: partner_billing_jib
+  field: invoice_description
+  pattern: (?i)\bJIB\b|joint interest billing
+- name: sales_tax_invoices
+  field: invoice_description
+  values:
+  - Sales Tax
+- name: tax_items
+  field: product_service_description
+  pattern: (?i)^\s*(tax|heavy equipment inventory tax|sales tax connected to purchase|ad valorem\b.*)\s*$
+- name: tax_item_lines
+  field: line_description
+  pattern: (?i)^\s*(tax|heavy equipment inventory tax|sales tax connected to purchase|ad valorem\b.*)\s*$
+exclusion_rules: []
+duplicates:
+  within_source: true
+  fuzzy: true
+cross_source:
+  enabled: false
+dates:
+  dayfirst: false
+  valid_window_years:
+  - 2023
+  - 2025
+dedupe:
+  supplier:
+    use_supplier_id: true
+    fuzzy_threshold: 92
+  item:
+    use_item_code: true
+    fuzzy_threshold: 95
+classification:
+  company_context: 'This is an onshore U.S. upstream oil and gas exploration and production operator. It runs a
+    large base of mature producing wells, likely including Appalachian-area assets, along with associated gathering,
+    compression, and dehydration, and it also carries out drilling, completion, and capital construction programs.
+    Spend centers on field operations: per-barrel saltwater disposal and water hauling, route-based well tending
+    and contract labor, workover, swabbing and fishing services, artificial lift (sucker rods, plunger lift, pumping
+    units), production chemicals (foamers, scale and corrosion inhibitors, defoamers), compressor maintenance, and
+    pipe, valves, fittings and MRO parts, plus routine trucking, mileage, per diem and equipment rental charges.
+    Many invoice lines are terse or generic (e.g., "Labor," "Truck Charge," "Product," well or lease names, unitemized
+    invoice totals), so the classifier should rely on vendor and context cues to place them. Fees billed by midstream
+    and gas companies for gathering, transportation, processing, compression on their systems and gas marketing
+    (often booked to revenue clearing or receivable accounts) are services bought from those suppliers and belong
+    in Marketing & Logistics.'
+  consistency:
+    group_fields: []
+    strong: 0.8
+    weak: 0.7
+    share: 0.7
+  labels: null
+  llm:
+    enabled: true
+    primary:
+      vendor: anthropic
+      model: claude-opus-5-5
+      effort: low
+    second:
+      vendor: anthropic
+      model: claude-sonnet-5-5
+      effort: low
+    judge:
+      vendor: anthropic
+      model: claude-opus-5-5
+      effort: low
+    tail:
+      vendor: anthropic
+      model: claude-sonnet-5-5
+      effort: low
+    fallbacks:
+    - vendor: anthropic
+      model: claude-sonnet-5-5
+      effort: low
+    primary_spend_share: 0.95
+    shortlist_above_leaves: 400
+    shortlist_size: 25
+    shortlist_batch_cap: 150
+    batch_size: 25
+    concurrency: 16
+    low_confidence_threshold: 0.5
+    vote_threshold: 0.7
+    second_max_units: 1500
+    second_top_spend_share: 0.5
+    second_top_spend_max_units: 400
+    max_units: 20000
+    cost_cap_usd: 60.0
+    supplier_profiles: true
+    scope_notes: true
+  embeddings:
+    provider: lsa
+    dim: 256
+output:
+  template: output_template.csv
